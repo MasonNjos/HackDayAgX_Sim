@@ -2,7 +2,9 @@
 
 Owner: Person B.
 
-plan() is a pure function of the world state (it never mutates it):
+plan() never mutates the world state. The agent does remember its last plan
+(for explanations and the safety fallback), so use one FleetAgent per sim run.
+Each plan:
   1. pin each working tractor's current job at the head of its queue (no preemption);
   2. eligibility via safety_agent predicates (implement, broken, route, fuel);
   3. feasibility/ETA via safety_agent.simulate_queue (inserting a refuel stop if needed);
@@ -12,8 +14,9 @@ Jobs no tractor can take go to warnings with the reason for every tractor.
 
 Before returning, the plan is checked with safety.validate(). If it fails, the
 agent falls back to its last valid plan (pruned to the current state), then to
-"every tractor keeps only its current job", so the sim is never handed an unsafe
-plan. The explanation is a diff against the last plan (explain.py).
+"every tractor keeps only its current job". Only if both of those fail too is the
+rejected plan returned, flagged with SAFETY: warnings (the sim still drops bad stops).
+The explanation is a diff against the last plan (explain.py).
 """
 from __future__ import annotations
 
@@ -39,30 +42,75 @@ class Option:
     refuel: bool
 
 
+def _trig(trigger: Event | None) -> dict | None:
+    return {"kind": trigger.kind, "t": trigger.t, "params": trigger.params} if trigger else None
+
+
 class FleetAgent:
     name = "coordinator"
 
     def __init__(self) -> None:
         self._last_queues: dict[str, list[Stop]] | None = None  # last plan returned (valid)
+        self._last_fuel: dict[str, float] = {}                  # tractor fuel when it was made
 
     def plan(self, state: WorldState, trigger: Event | None) -> Plan:
+        old = self._old_queues(state)
         queues, why, warnings = self._build(state, trigger)
         plan = Plan(queues=queues, why=why)
         violations = safety.validate(plan, state)
         note = ""
         if violations:
-            fallback = self._fallback(state)
+            fallback = self._fallback(state, old)
             if fallback is not None:
                 kept, label = fallback
-                warnings = [f"SAFETY: plan rejected ({'; '.join(violations)}); kept {label}"]
+                plan = Plan(queues=kept, why=self._held_back_why(state, kept, why, label, trigger))
+                # Keep the "unassignable" warnings: those jobs are still unassignable.
+                warnings = warnings + [f"SAFETY: plan rejected ({'; '.join(violations)}); kept {label}"]
                 note = f"Safety check rejected the new plan ({violations[0]}); kept {label}. "
-                plan, violations = Plan(queues=kept), []
+                violations = []
         plan.warnings = (warnings + safety.deadline_warnings(plan, state)
                          + [f"SAFETY: {v}" for v in violations])
-        plan.explanation = note + explain.explain_plan(self._last_queues, plan, state, trigger)
+        plan.explanation = note + explain.explain_plan(old, plan, state, trigger)
         if not violations:
             self._last_queues = {tid: list(q) for tid, q in plan.queues.items()}
+            self._last_fuel = {t.id: t.fuel for t in state.tractors.values()}
         return plan
+
+    def _old_queues(self, state: WorldState) -> dict[str, list[Stop]] | None:
+        """The last plan, minus what the tractors have done since.
+
+        Finishing a job or a refuel only triggers a replan when the queue is empty,
+        so the last plan can still list stops that are already done. Done jobs are
+        dropped here; a refuel at the head is dropped if the tank has gone up since.
+        """
+        if self._last_queues is None:
+            return None
+        out = {}
+        for tid, q in self._last_queues.items():
+            q = [s for s in q if not (s.kind == "job" and s.target in state.jobs
+                                      and state.jobs[s.target].status == DONE)]
+            tr = state.tractors.get(tid)
+            if q and q[0].kind == "refuel" and tr and tr.fuel > self._last_fuel.get(tid, tr.fuel) + 1e-9:
+                q = q[1:]
+            out[tid] = q
+        return out
+
+    @staticmethod
+    def _held_back_why(state: WorldState, kept, rejected_why: dict, label: str, trigger) -> dict:
+        """why records for a fallback plan.
+
+        Records for the jobs the kept plan still holds are not replaced (the sim keeps
+        the ones from when they were assigned). Unassignable records stay. Every other
+        open job gets a record saying it was held back, so /why never shows a stale owner.
+        """
+        kept_jobs = {s.target for q in kept.values() for s in q if s.kind == "job"}
+        out = {j: r for j, r in rejected_why.items() if r.get("chosen") is None and j not in kept_jobs}
+        reason = f"held back because the new plan failed the safety check (kept {label})"
+        for j in state.jobs.values():
+            if j.status != DONE and j.id not in kept_jobs and j.id not in out:
+                out[j.id] = {"chosen": None, "eligible": [], "rejected": {}, "reason": reason,
+                             "planned_at": state.t, "trigger": _trig(trigger)}
+        return out
 
     def _build(self, state: WorldState, trigger: Event | None):
         """Greedy assignment. Returns (queues, why records, warnings)."""
@@ -75,7 +123,7 @@ class FleetAgent:
                 queues[t.id] = [Stop("job", t.current_job)]
                 pinned.add(t.current_job)
 
-        trig = {"kind": trigger.kind, "t": trigger.t, "params": trigger.params} if trigger else None
+        trig = _trig(trigger)
         sims = {tid: safety.simulate_queue(state.tractors[tid], q, state) for tid, q in queues.items()}
         why: dict[str, dict] = {}
         warnings: list[str] = []
@@ -136,19 +184,22 @@ class FleetAgent:
         self._top_up(state, queues, sims)
         return queues, why, warnings
 
-    def _fallback(self, state: WorldState) -> tuple[dict[str, list[Stop]], str] | None:
-        """A safe plan to keep when a new one fails validation, or None."""
+    def _fallback(self, state: WorldState, old) -> tuple[dict[str, list[Stop]], str] | None:
+        """A safe plan to keep when a new one fails validation, or None.
+
+        `old` is the last plan with completed stops removed (see _old_queues).
+        """
         pinned = {}
         for t in state.tractors.values():
             pinned[t.id] = [Stop("job", t.current_job)] if safety.must_keep_current(t, state) else []
         candidates = []
-        if self._last_queues is not None:
+        if old is not None:
             keep_jobs = {q[0].target for q in pinned.values() if q}
             pruned = {}
             for t in state.tractors.values():
                 q = list(pinned[t.id])
                 if t.status != BROKEN:
-                    for s in self._last_queues.get(t.id, []):
+                    for s in old.get(t.id, []):
                         if s.kind == "refuel" and s.target in state.depots:
                             q.append(s)
                         elif s.kind == "job" and s.target in state.jobs and s.target not in keep_jobs:

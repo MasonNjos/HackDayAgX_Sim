@@ -91,26 +91,33 @@ def diff_plans(old_queues: dict[str, list[Stop]] | None, new_queues: dict[str, l
 
 def _breakdown_lead(tid: str, old_queues: dict[str, list[Stop]] | None,
                     state: WorldState, t: int) -> tuple[str, str | None]:
-    """'T2 broke down at t=40 while spraying River Flats (60% done).' plus the job it was on."""
+    """'T2 broke down at t=40 while spraying River Flats (60% done).' plus the job it was on.
+
+    The current state is checked first: the sim has just released the job, the tractor
+    was the last one to work it, and it is standing at that field. The last plan is
+    only used to tell where it was heading (old_queues has completed stops removed).
+    """
+    tr = state.tractors.get(tid)
+    loc = tr.location if tr else None
+    for j in state.jobs.values():
+        if (j.status != DONE and j.owner is None and j.remaining < 1.0 and j.completed_by
+                and j.completed_by[-1] == tid and j.field in state.fields and state.job_node(j.id) == loc):
+            pct = round((1.0 - j.remaining) * 100)
+            return f"{tid} broke down at t={t} while {job_phrase(state, j.id)} ({pct}% done).", j.id
+
     head: Stop | None = None
     for s in (old_queues or {}).get(tid, []):
         if s.kind == "refuel" or (s.target in state.jobs and state.jobs[s.target].status != DONE):
             head = s
             break
-    if head is None:  # no history (first plan of this agent): find the job it was working on
-        for j in state.jobs.values():
-            if j.status != DONE and j.remaining < 1.0 and j.completed_by and j.completed_by[-1] == tid:
-                head = Stop("job", j.id)
-                break
     if head is None:
         return f"{tid} broke down at t={t} while idle.", None
     if head.kind == "refuel":
+        depot = state.depots.get(head.target)
+        if depot and depot.node == loc:
+            return f"{tid} broke down at t={t} while refuelling at {head.target}.", None
         return f"{tid} broke down at t={t} on its way to refuel at {head.target}.", None
-    job = state.jobs[head.target]
-    if tid in job.completed_by and job.remaining < 1.0:
-        pct = round((1.0 - job.remaining) * 100)
-        return f"{tid} broke down at t={t} while {job_phrase(state, job.id)} ({pct}% done).", job.id
-    return f"{tid} broke down at t={t} on its way to {_field_name(state, job.id)} ({job.id}).", job.id
+    return f"{tid} broke down at t={t} on its way to {_field_name(state, head.target)} ({head.target}).", head.target
 
 
 def _lead(trigger: Event | None, old_queues, state: WorldState) -> tuple[str, str | None, str | None]:
@@ -198,14 +205,7 @@ def explain_plan(old_queues: dict[str, list[Stop]] | None, plan: Plan, state: Wo
                 parts.append(f"{tid}: {' > '.join(js)}.")
     else:
         d = diff_plans(old_queues, plan.queues, state)
-        moved = dict(d["moved"])
-        if broken_job and broken_job in d["newly_assigned"]:  # sim already released it
-            moved[broken_job] = (broken, d["newly_assigned"].pop(broken_job))
-        if broken:
-            for jid, tid in list(d["newly_assigned"].items()):
-                if jid in _jobs_in(old_queues.get(broken, []), state):
-                    moved[jid] = (broken, d["newly_assigned"].pop(jid))
-
+        moved = dict(d["moved"])  # the broken tractor's old jobs land here too
         if broken_job and broken_job in moved:
             parts.append(f"Its remaining work went to {_assignment_detail(broken_job, moved.pop(broken_job)[1], why, state)}.")
         for jid, (src, dst) in sorted(moved.items()):
@@ -215,11 +215,19 @@ def explain_plan(old_queues: dict[str, list[Stop]] | None, plan: Plan, state: Wo
             parts.append(f"{jid} ({job_phrase(state, jid)}) assigned to {_assignment_detail(jid, dst, why, state)}.")
         for tid in d["reordered"]:
             parts.append(f"{tid}'s order is now {' > '.join(_jobs_in(plan.queues[tid], state))}.")
-        unchanged = [t for t in d["unchanged"] if t != broken]
-        if unchanged and len(parts) > 1:
+        # Dropped jobs with a "no tractor" record are covered by the unassignable lines below.
+        for jid, src in sorted(d["dropped"].items()):
+            rec = why.get(jid) or {}
+            if rec.get("chosen", "") is None:
+                continue
+            reason = f": {rec['reason']}" if rec.get("reason") else ""
+            parts.append(f"{jid} ({job_phrase(state, jid)}) was taken off {src}'s queue{reason}.")
+        changed = len(parts) > 1 or bool(d["dropped"])
+        unchanged = d["unchanged"]
+        if unchanged and changed:
             parts.append(_join([f"{t}'s {_work_word(state, t)} order" for t in unchanged])
                          + (" was" if len(unchanged) == 1 else " were") + " unchanged.")
-        if len(parts) == 1:
+        if not changed:
             parts.append("No change to assignments.")
 
     parts += _unassignable_lines(plan, state)
@@ -265,7 +273,7 @@ def why_text(job_id: str, record: dict | None, state: WorldState) -> str:
     if record.get("distance_km") is not None:
         detail.append(f"{record['distance_km']:g} km drive")
     if eta is not None:
-        slack = dl - eta
+        slack = record.get("slack", dl - eta)
         detail.append(f"ETA t={eta} ({slack} min before the deadline)" if slack >= 0
                       else f"ETA t={eta} ({-slack} min late; the best available)")
     if record.get("refuel_first"):

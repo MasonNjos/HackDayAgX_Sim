@@ -161,7 +161,10 @@ class Dispatcher(Protocol):
         1. plan() is pure: it never mutates `state`. The sim sets job.owner and
            job.status (ASSIGNED / IN_PROGRESS / UNASSIGNABLE) when it commits a plan.
         2. tractor.current_job is set while the tractor travels to the job as well
-           as while it works on it. Dispatchers keep it at the head of its queue.
+           as while it works on it. Dispatchers keep it at the head of its queue,
+           except when the tractor is still driving there and the field can no
+           longer be reached: then the job is left out of its queue, and the sim
+           should clear current_job and drive to the new queue head instead.
         3. A Stop("refuel", depot_id): drive to the depot node, wait REFUEL_TICKS,
            and fill the tank to fuel_capacity.
         4. UNASSIGNABLE means "no tractor can take it right now", not cancelled.

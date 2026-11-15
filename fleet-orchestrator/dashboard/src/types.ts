@@ -5,7 +5,7 @@ export interface Edge { id: string; a: string; b: string; length: number; label:
 export interface Depot { id: string; node: string }
 export interface Field { id: string; name: string; node: string; area: number; x: number; y: number }
 
-export type TractorStatus = "idle" | "travelling" | "working" | "refuelling" | "broken";
+export type TractorStatus = "idle" | "travelling" | "working" | "refuelling" | "broken" | "complete";
 export interface Tractor {
   id: string;
   implement: string;

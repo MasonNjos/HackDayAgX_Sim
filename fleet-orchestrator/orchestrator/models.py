@@ -14,7 +14,8 @@ from typing import Protocol
 # --- status values -----------------------------------------------------------
 
 IDLE, TRAVELLING, WORKING, REFUELLING, BROKEN = "idle", "travelling", "working", "refuelling", "broken"
-TRACTOR_STATUSES = {IDLE, TRAVELLING, WORKING, REFUELLING, BROKEN}
+COMPLETE = "complete"  # day over and parked at a depot
+TRACTOR_STATUSES = {IDLE, TRAVELLING, WORKING, REFUELLING, BROKEN, COMPLETE}
 
 PENDING, ASSIGNED, IN_PROGRESS, DONE, UNASSIGNABLE = "pending", "assigned", "in_progress", "done", "unassignable"
 JOB_STATUSES = {PENDING, ASSIGNED, IN_PROGRESS, DONE, UNASSIGNABLE}

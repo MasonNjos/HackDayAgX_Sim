@@ -18,6 +18,11 @@ refuel stop waits REFUEL_TICKS at the depot, then fills the tank (rule 3).
 
 1 tick = 1 sim minute. Movement is along graph edges; a tractor re-routes at every node,
 so a newly blocked edge takes effect at the next node it reaches.
+
+Day end: once every job is done and no more jobs are due to arrive, each tractor that has finished
+its queue drives back to the nearest depot (its home fuel station) and parks there. Until then an
+idle tractor waits where it is, since a new job or a breakdown may still need it. The run ends once
+every working tractor is parked at a depot (or at the horizon); those tractors are then COMPLETE.
 """
 from __future__ import annotations
 
@@ -27,7 +32,7 @@ from dataclasses import dataclass
 from . import nav_agent as nav
 from .eventlog import EventLog
 from .metrics import Metrics
-from .models import (ASSIGNED, BROKEN, DONE, IDLE, IN_PROGRESS, PENDING, REFUELLING, TRAVELLING,
+from .models import (ASSIGNED, BROKEN, COMPLETE, DONE, IDLE, IN_PROGRESS, PENDING, REFUELLING, TRAVELLING,
                      REFUEL_TICKS, WORKING, Dispatcher, Event, Plan, Stop, WorldState, job_from_dict)
 
 EPS = 1e-9
@@ -64,6 +69,7 @@ class Sim:
         self.last_explanation = ""
         self.last_warnings: list[str] = []
         self._unreachable_logged: set[tuple[str, str]] = set()
+        self.going_home: set[str] = set()  # tractors driving back to a depot at day end
         self.started = False
         self.last_source = ""      # who made the committed plan, e.g. "claude-coordinator" / "greedy fallback"
         # Deferred planning (live server): replan() only records a request; the server calls the
@@ -82,7 +88,32 @@ class Sim:
     def finished(self) -> bool:
         if self.t >= self.horizon:
             return True
-        return not self.state.open_jobs() and not self.pending_events
+        return not self.state.open_jobs() and not self.pending_events and self.all_parked()
+
+    def day_over(self) -> bool:
+        """All work is done and no more jobs are scheduled to arrive."""
+        return not self.state.open_jobs() and not any(e.kind == "new_job" for e in self.pending_events)
+
+    def _mark_day_complete(self) -> None:
+        """Once the day is over and everyone is parked, mark every working tractor COMPLETE."""
+        if not (self.day_over() and self.all_parked()):
+            return
+        done = [tid for tid, tr in self.state.tractors.items() if tr.status != BROKEN]
+        if any(self.state.tractors[tid].status != COMPLETE for tid in done):
+            for tid in done:
+                self.state.tractors[tid].status = COMPLETE
+                self.state.tractors[tid].current_job = None
+                self.queues[tid] = []  # nothing left to do today (e.g. a leftover refuel stop)
+                self.refuel_wait.pop(tid, None)
+                self.going_home.discard(tid)
+            self.log.write(self.t + 1, "day_complete", tractors=done)
+
+    def all_parked(self) -> bool:
+        """Every tractor that can move is stopped at a depot."""
+        s = self.state
+        depot_nodes = {d.node for d in s.depots.values()}
+        return all(tr.status == BROKEN or (self.legs[tid] is None and tr.location in depot_nodes)
+                   for tid, tr in s.tractors.items())
 
     def run(self) -> dict:
         while not self.finished():
@@ -120,6 +151,7 @@ class Sim:
                 obs.on_tick(self)
 
         self.metrics.record_tick(self.state, {t for t, r in self.stall_reason.items() if r == "out_of_fuel"})
+        self._mark_day_complete()
         self.state.t += 1
         self.version += 1
         if need_replan and not self.finished():
@@ -351,6 +383,19 @@ class Sim:
 
         leg = self.legs[tid]
         if not q:
+            home = self._home_node(tid)
+            if home is not None and (leg or tr.location != home):
+                if tid not in self.going_home:
+                    self.going_home.add(tid)
+                    self.log.write(self.t, "returning_home", tractor=tid, depot=home)
+                if not self._burn(tr):
+                    return True
+                tr.status = TRAVELLING
+                self._move(tr, home)
+                if not self.legs[tid] and tr.location == home:
+                    self.log.write(self.t + 1, "parked", tractor=tid, depot=home)
+                return False
+            self.going_home.discard(tid)
             if leg:  # finish the edge it is on, then wait
                 if not self._burn(tr):
                     return True
@@ -359,6 +404,7 @@ class Sim:
             else:
                 tr.status = IDLE
             return False
+        self.going_home.discard(tid)
 
         stop = q[0]
         target = self._stop_node(stop)
@@ -423,6 +469,21 @@ class Sim:
             return not q
         return False
 
+    def _home_node(self, tid: str) -> str | None:
+        """The depot node a tractor with nothing to do should drive to, or None to wait where it is."""
+        s = self.state
+        tr = s.tractors[tid]
+        if not self.day_over() or not s.depots:
+            return None
+        leg = self.legs[tid]
+        start = leg.b if leg else tr.location
+        best, best_len = None, float("inf")
+        for d in s.depots.values():
+            r = nav.route(s, start, d.node)
+            if r is not None and r[1] < best_len:
+                best, best_len = d.node, r[1]
+        return best
+
     def _move(self, tr, target: str) -> None:
         """Move tr up to tr.speed km towards target, re-routing at each node."""
         s = self.state
@@ -464,11 +525,14 @@ class Sim:
     def _route_points(self, tid: str) -> list[list[float]]:
         """[x, y] points from the tractor's position to its queue head (for drawing)."""
         s, q = self.state, self.queues[tid]
-        if not q or s.tractors[tid].status == BROKEN:
+        if s.tractors[tid].status == BROKEN:
+            return []
+        target = self._stop_node(q[0]) if q else self._home_node(tid) if tid in self.going_home else None
+        if target is None:
             return []
         leg = self.legs[tid]
         start = leg.b if leg else s.tractors[tid].location
-        r = nav.route(s, start, self._stop_node(q[0]))
+        r = nav.route(s, start, target)
         if r is None:
             return []
         return [list(self.position(tid))] + [[s.nodes[n].x, s.nodes[n].y] for n in r[0]]

@@ -15,7 +15,7 @@ import math
 from dataclasses import dataclass, field
 
 from . import nav_agent
-from .models import BROKEN, DONE, REFUEL_TICKS, Job, Plan, Stop, Tractor, WorldState
+from .models import BROKEN, DONE, REFUEL_TICKS, WORKING, Job, Plan, Stop, Tractor, WorldState
 
 
 # --- single-stop predicates --------------------------------------------------
@@ -35,6 +35,20 @@ def incompatibility_reason(tractor: Tractor, job: Job) -> str | None:
 def work_ticks(tractor: Tractor, job: Job, state: WorldState) -> int:
     area = state.fields[job.field].area
     return math.ceil(job.remaining * area / tractor.work_rate) if job.remaining > 0 else 0
+
+
+def must_keep_current(tractor: Tractor, state: WorldState) -> bool:
+    """True if the tractor's current job must stay at the head of its queue.
+
+    A tractor working on site keeps it. A tractor still driving there keeps it
+    only while the field can be reached; otherwise the job is released.
+    """
+    job = state.jobs.get(tractor.current_job) if tractor.current_job else None
+    if tractor.status == BROKEN or job is None or job.status == DONE or job.field not in state.fields:
+        return False
+    if tractor.status == WORKING:
+        return True
+    return nav_agent.route(state, tractor.location, state.job_node(job.id)) is not None
 
 
 def nearest_depot(state: WorldState, node: str) -> tuple[str, float] | None:
@@ -94,8 +108,9 @@ def _blocked_note(state: WorldState) -> str:
 def simulate_queue(tractor: Tractor, stops: list[Stop], state: WorldState) -> QueueSim:
     """Walk a tractor's queue from its current node, tick and fuel.
 
-    Fuel rule: fuel never drops below the reserve, and after every job there is
-    still enough fuel to reach the nearest depot above the reserve.
+    Fuel rule: after every job there is still enough fuel to reach the nearest
+    depot above the reserve. A refuel stop only needs the tank not to run dry,
+    so a tractor that is already low can always be sent to refuel.
     The tractor's own in-progress job at the head is exempt from the fuel check:
     it was checked when committed, and planning from the last node passed
     over-counts distance for a tractor mid-edge.
@@ -109,6 +124,8 @@ def simulate_queue(tractor: Tractor, stops: list[Stop], state: WorldState) -> Qu
             job = state.jobs.get(stop.target)
             if job is None:
                 return _fail(sim, "invalid", f"unknown job {stop.target}")
+            if job.field not in state.fields:
+                return _fail(sim, "invalid", f"{job.id} is on unknown field {job.field}")
             dest = state.job_node(job.id)
             label = f"{job.id} ({state.fields[job.field].name})"
         elif stop.kind == "refuel":
@@ -130,8 +147,10 @@ def simulate_queue(tractor: Tractor, stops: list[Stop], state: WorldState) -> Qu
         exempt = i == 0 and stop.kind == "job" and stop.target == tractor.current_job
 
         if stop.kind == "refuel":
-            if fuel < reserve and not exempt:
-                return _fail(sim, "fuel", f"would reach depot with {fuel:.0f} L, below reserve {reserve:.0f} L")
+            # Going to refuel only has to avoid running dry: a tractor already at or
+            # below reserve must still be allowed to get back to a depot.
+            if fuel < 0:
+                return _fail(sim, "fuel", f"would run dry {-fuel:.0f} L short of {depot.id}")
             wt = REFUEL_TICKS
             fuel = tractor.fuel_capacity
         else:
@@ -180,8 +199,7 @@ def validate(plan: Plan, state: WorldState) -> list[str]:
             if stops:
                 out.append(f"{tid} is broken but has {len(stops)} stop(s) queued")
             continue
-        if tractor.current_job and state.jobs.get(tractor.current_job, None) is not None \
-                and state.jobs[tractor.current_job].status != DONE:
+        if must_keep_current(tractor, state):
             if not stops or stops[0] != Stop("job", tractor.current_job):
                 out.append(f"{tid} would be pulled off its current job {tractor.current_job}")
 
@@ -214,7 +232,7 @@ def deadline_warnings(plan: Plan, state: WorldState) -> list[str]:
             continue
         sim = simulate_queue(tractor, stops, state)
         for s in sim.steps:
-            if s.stop.kind != "job":
+            if s.stop.kind != "job" or s.stop.target not in state.jobs:
                 continue
             job = state.jobs[s.stop.target]
             if s.finish > job.deadline:

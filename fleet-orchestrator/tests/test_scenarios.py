@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from orchestrator.fleet_agent import FleetAgent
-from orchestrator.models import BROKEN, IN_PROGRESS, WORKING, Event, Plan, Stop, load_scenario
+from orchestrator.models import ASSIGNED, BROKEN, IN_PROGRESS, TRAVELLING, WORKING, Event, Job, Plan, Stop, load_scenario
 from orchestrator.safety_agent import compatible, simulate_queue, validate
 
 SCENARIO = Path(__file__).resolve().parent.parent / "scenarios" / "farm.json"
@@ -123,3 +123,42 @@ def test_validate_catches_fuel_and_broken(state):
     v = validate(bad, state)
     assert any(x.startswith("T1:") and "reserve" in x for x in v)
     assert any("T2 is broken" in x for x in v)
+
+
+def test_tractor_below_reserve_can_still_refuel(state):
+    t1 = state.tractors["T1"]
+    t1.fuel = t1.reserve_fuel - 1          # already under reserve, parked at the depot
+    plan = FleetAgent().plan(state, None)
+    assert_safe(plan, state)
+    assert plan.queues["T1"] and plan.queues["T1"][0] == Stop("refuel", "D1")
+
+
+def test_low_fuel_after_current_job_gets_refuel(state):
+    t1 = state.tractors["T1"]
+    t1.status, t1.current_job, t1.location, t1.fuel = WORKING, "J6", "west", 30
+    state.jobs["J6"].status = IN_PROGRESS
+    plan = FleetAgent().plan(state, None)
+    assert_safe(plan, state)
+    q = plan.queues["T1"]
+    assert q[0] == Stop("job", "J6")
+    assert len(q) > 1 and q[1].kind == "refuel"
+
+
+def test_unreachable_current_job_is_released(state):
+    t1 = state.tractors["T1"]
+    t1.status, t1.current_job = TRAVELLING, "J4"   # driving from the depot towards River Flats
+    state.jobs["J4"].status = ASSIGNED
+    state.blocked_edges = {"bridge", "south_road"}  # east side cut off completely
+    plan = FleetAgent().plan(state, Event(0, "route_blocked", {"edge": "south_road"}))
+    assert_safe(plan, state)
+    assert "J4" not in owners(plan)
+    assert any(w.startswith("J4 unassignable") and "no open road" in w for w in plan.warnings)
+    assert plan.queues["T1"]                        # T1 picks up west-side work instead
+
+
+def test_job_on_unknown_field_is_reported_not_crashing(state):
+    state.jobs["J99"] = Job(id="J99", type="spray", field="F99", priority=2, deadline=300)
+    plan = FleetAgent().plan(state, Event(0, "new_job", {}))
+    assert_safe(plan, state)
+    assert "J99" not in owners(plan)
+    assert any(w.startswith("J99 unassignable: unknown field F99") for w in plan.warnings)

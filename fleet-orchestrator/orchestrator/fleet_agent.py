@@ -19,6 +19,7 @@ from .models import BROKEN, DONE, Event, Job, Plan, Stop, WorldState
 
 LATE_PENALTY = 5.0   # cost per tick past the deadline
 WAIT_WEIGHT = 0.2    # cost per tick before the tractor can start (spreads load)
+LOW_FUEL = 0.25      # fraction of capacity: finishing a queue below this adds a refuel stop
 
 
 @dataclass
@@ -40,16 +41,24 @@ class FleetAgent:
         pinned: set[str] = set()
         for t in state.tractors.values():
             queues[t.id] = []
-            job = state.jobs.get(t.current_job) if t.current_job else None
-            if t.status != BROKEN and job is not None and job.status != DONE:
-                queues[t.id] = [Stop("job", job.id)]
-                pinned.add(job.id)
+            # Keep the current job unless the tractor is still driving there and the field is cut off.
+            if safety.must_keep_current(t, state):
+                queues[t.id] = [Stop("job", t.current_job)]
+                pinned.add(t.current_job)
 
         sims = {tid: safety.simulate_queue(state.tractors[tid], q, state) for tid, q in queues.items()}
-        # Everything not done, including jobs marked unassignable earlier: a repair may make them possible.
-        pool = [j for j in state.jobs.values() if j.status != DONE and j.id not in pinned]
         why: dict[str, dict] = {}
         warnings: list[str] = []
+        # Everything not done, including jobs marked unassignable earlier: a repair may make them possible.
+        pool = []
+        for j in state.jobs.values():
+            if j.status == DONE or j.id in pinned:
+                continue
+            if j.field not in state.fields:
+                warnings.append(f"{j.id} unassignable: unknown field {j.field}")
+                why[j.id] = {"chosen": None, "eligible": [], "rejected": {}, "reason": f"unknown field {j.field}"}
+                continue
+            pool.append(j)
 
         while pool:
             best_key, best_job, best_opt, best_rec = None, None, None, None
@@ -85,6 +94,7 @@ class FleetAgent:
             why[best_job.id] = best_rec
             pool.remove(best_job)
 
+        self._top_up(state, queues, sims)
         plan = Plan(queues=queues, why=why)
         violations = safety.validate(plan, state)
         plan.warnings = warnings + safety.deadline_warnings(plan, state) + [f"SAFETY: {v}" for v in violations]
@@ -92,6 +102,26 @@ class FleetAgent:
         return plan
 
     # --- helpers -------------------------------------------------------------
+
+    def _top_up(self, state: WorldState, queues, sims) -> None:
+        """Send a tractor to refuel at the end of its queue if it would finish low.
+
+        Without this, a tractor at or near its reserve gets no jobs and nothing
+        ever sends it to a depot, so it would stay stranded.
+        """
+        for t in state.tractors.values():
+            q, sim = queues[t.id], sims[t.id]
+            if t.status == BROKEN or not sim.ok or (q and q[-1].kind == "refuel"):
+                continue
+            if sim.fuel >= LOW_FUEL * t.fuel_capacity:
+                continue
+            depot = safety.nearest_depot(state, sim.end_node)
+            if depot is None:
+                continue
+            stops = q + [Stop("refuel", depot[0])]
+            new_sim = safety.simulate_queue(t, stops, state)
+            if new_sim.ok:
+                queues[t.id], sims[t.id] = stops, new_sim
 
     def _options(self, job: Job, state: WorldState, queues, sims) -> tuple[dict[str, Option], dict[str, str]]:
         options: dict[str, Option] = {}

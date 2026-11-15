@@ -2,3 +2,4 @@ pytest
 fastapi
 uvicorn
 anthropic>=2,<3
+httpx  # FastAPI TestClient (tests/test_server.py)

@@ -1,9 +1,31 @@
 import { useState } from "react";
 import type { LogRecord, State, Why } from "../types";
 
+/** Display names for dispatchers / plan sources. */
+export const SOURCE_LABEL: Record<string, string> = {
+  "claude-coordinator": "Claude", claude: "Claude",
+  "greedy fallback": "Greedy fallback",
+  coordinator: "Greedy", baseline: "FCFS baseline",
+};
+export const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? s;
+
 export function ExplanationPanel({ state }: { state: State }) {
   return (
     <div className="explain">
+      <div className="explain-head">
+        {state.plan_source && (
+          <span className={`source src-${state.plan_source.replace(/\W+/g, "-")}`}
+                title="Which coordinator made the plan the tractors are following">
+            Plan by {sourceLabel(state.plan_source)}
+          </span>
+        )}
+        {state.planning && (
+          <span className="planning" role="status">
+            <i className="spinner" /> {sourceLabel(state.planning.dispatcher)} is replanning
+            {state.planning.trigger ? ` after ${state.planning.trigger.replace(/_/g, " ")}` : ""}… {state.planning.seconds.toFixed(0)}s
+          </span>
+        )}
+      </div>
       <p>{state.explanation || <span className="muted">No plan yet. Press Start.</span>}</p>
       {state.warnings.length > 0 && (
         <ul className="warnings">{state.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul>
@@ -35,7 +57,9 @@ function describe(r: LogRecord): string {
   switch (r.kind) {
     case "event": return `EVENT ${p.event} ${JSON.stringify(p.params)}`;
     case "assignment": return `${p.job} → ${p.tractor}${p.previous ? ` (was ${p.previous})` : ""}`;
-    case "plan": return `replan${p.trigger ? ` (${p.trigger})` : ""}: ${p.explanation ?? ""}`;
+    case "plan": return `${p.source ? `[${sourceLabel(p.source)}] ` : ""}replan${p.trigger ? ` (${p.trigger})` : ""}: ${p.explanation ?? ""}`;
+    case "plan_discarded": return `plan dropped: ${p.reason}`;
+    case "dispatcher_error": return `PLANNER ERROR ${p.error}`;
     case "job_started": return `${p.tractor} started ${p.job}`;
     case "job_completed": return `${p.tractor} finished ${p.job}${p.on_time ? "" : " — LATE"}`;
     case "job_released": return `${p.job} released by ${p.tractor} (${p.reason}, ${Math.round((1 - p.remaining) * 100)}% done)`;

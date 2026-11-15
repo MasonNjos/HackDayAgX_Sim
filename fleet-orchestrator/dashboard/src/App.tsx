@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { FarmMap } from "./components/FarmMap";
-import { EventLog, ExplanationPanel, OperatorControls, WhyPanel } from "./components/Panels";
+import { EventLog, ExplanationPanel, OperatorControls, WhyPanel, sourceLabel } from "./components/Panels";
 import { JobTable, TractorTable } from "./components/Tables";
 import type { Edge, State, Why } from "./types";
 
@@ -50,7 +50,8 @@ export default function App() {
       <header>
         <div className="title">
           <h1>Fleet Command Center</h1>
-          <span className={`badge ${state.dispatcher}`}>{state.dispatcher === "baseline" ? "FCFS baseline" : "Coordinator"}</span>
+          <span className={`badge ${state.dispatcher}`}>{sourceLabel(state.dispatcher)}</span>
+          {state.planning && <span className="pill planning-pill"><i className="spinner" /> planning</span>}
         </div>
         <div className="clock num">
           t = <b>{state.t}</b> <span className="muted">/ {state.horizon} min</span>
@@ -69,7 +70,7 @@ export default function App() {
           <label className="inline">reset as
             <select value="" onChange={(e) => { if (e.target.value) { setWhy(null); run(api.reset(e.target.value)); } }}>
               <option value="">choose…</option>
-              {state.dispatchers.map((d) => <option key={d} value={d}>{d}</option>)}
+              {state.dispatchers.map((d) => <option key={d} value={d}>{sourceLabel(d)}</option>)}
             </select>
           </label>
         </div>

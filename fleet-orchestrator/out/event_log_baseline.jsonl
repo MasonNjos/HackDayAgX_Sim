@@ -1,0 +1,42 @@
+{"t": 0, "kind": "run_start", "dispatcher": "baseline", "tractors": ["T1", "T2", "T3"], "jobs": ["J1", "J2", "J3", "J4", "J5", "J6", "J7", "J8", "J9", "J10"]}
+{"t": 0, "kind": "assignment", "dispatcher": "baseline", "job": "J1", "tractor": "T1", "previous": null}
+{"t": 0, "kind": "assignment", "dispatcher": "baseline", "job": "J2", "tractor": "T2", "previous": null}
+{"t": 0, "kind": "assignment", "dispatcher": "baseline", "job": "J3", "tractor": "T3", "previous": null}
+{"t": 0, "kind": "plan", "dispatcher": "baseline", "trigger": null, "queues": {"T1": ["job:J1"], "T2": ["job:J2"], "T3": ["job:J3"]}, "explanation": "FCFS: J1->T1, J2->T2, J3->T3", "warnings": []}
+{"t": 20, "kind": "job_started", "dispatcher": "baseline", "job": "J2", "tractor": "T2", "remaining": 1.0}
+{"t": 32, "kind": "job_started", "dispatcher": "baseline", "job": "J1", "tractor": "T1", "remaining": 1.0}
+{"t": 40, "kind": "job_started", "dispatcher": "baseline", "job": "J3", "tractor": "T3", "remaining": 1.0}
+{"t": 50, "kind": "job_completed", "dispatcher": "baseline", "job": "J2", "tractor": "T2", "on_time": true, "deadline": 240, "worked_by": ["T2"]}
+{"t": 50, "kind": "assignment", "dispatcher": "baseline", "job": "J4", "tractor": "T2", "previous": null}
+{"t": 50, "kind": "plan", "dispatcher": "baseline", "trigger": null, "queues": {"T1": ["job:J1"], "T2": ["job:J4"], "T3": ["job:J3"]}, "explanation": "FCFS: J4->T2", "warnings": []}
+{"t": 60, "kind": "event", "dispatcher": "baseline", "event": "breakdown", "params": {"tractor": "T2"}}
+{"t": 60, "kind": "job_released", "dispatcher": "baseline", "job": "J4", "tractor": "T2", "reason": "breakdown", "remaining": 1.0}
+{"t": 60, "kind": "plan", "dispatcher": "baseline", "trigger": "breakdown", "queues": {"T1": ["job:J1"], "T2": [], "T3": ["job:J3"]}, "explanation": "FCFS: no changes", "warnings": []}
+{"t": 92, "kind": "job_completed", "dispatcher": "baseline", "job": "J1", "tractor": "T1", "on_time": true, "deadline": 400, "worked_by": ["T1"]}
+{"t": 92, "kind": "assignment", "dispatcher": "baseline", "job": "J4", "tractor": "T1", "previous": null}
+{"t": 92, "kind": "plan", "dispatcher": "baseline", "trigger": null, "queues": {"T1": ["job:J4"], "T2": [], "T3": ["job:J3"]}, "explanation": "FCFS: J4->T1", "warnings": []}
+{"t": 104, "kind": "job_started", "dispatcher": "baseline", "job": "J4", "tractor": "T1", "remaining": 1.0}
+{"t": 120, "kind": "job_completed", "dispatcher": "baseline", "job": "J3", "tractor": "T3", "on_time": true, "deadline": 420, "worked_by": ["T3"]}
+{"t": 120, "kind": "assignment", "dispatcher": "baseline", "job": "J5", "tractor": "T3", "previous": null}
+{"t": 120, "kind": "plan", "dispatcher": "baseline", "trigger": null, "queues": {"T1": ["job:J4"], "T2": [], "T3": ["job:J5"]}, "explanation": "FCFS: J5->T3", "warnings": []}
+{"t": 150, "kind": "event", "dispatcher": "baseline", "event": "route_blocked", "params": {"edge": "bridge"}}
+{"t": 150, "kind": "plan", "dispatcher": "baseline", "trigger": "route_blocked", "queues": {"T1": ["job:J4"], "T2": [], "T3": ["job:J5"]}, "explanation": "FCFS: no changes", "warnings": []}
+{"t": 150, "kind": "violation", "dispatcher": "baseline", "violation": "out_of_fuel", "detail": "T1 ran out of fuel at east"}
+{"t": 150, "kind": "job_released", "dispatcher": "baseline", "job": "J4", "tractor": "T1", "reason": "out_of_fuel", "remaining": 0.08}
+{"t": 151, "kind": "plan", "dispatcher": "baseline", "trigger": null, "queues": {"T1": [], "T2": [], "T3": ["job:J5"]}, "explanation": "FCFS: no changes", "warnings": []}
+{"t": 165, "kind": "job_started", "dispatcher": "baseline", "job": "J5", "tractor": "T3", "remaining": 1.0}
+{"t": 200, "kind": "event", "dispatcher": "baseline", "event": "priority_change", "params": {"job": "J7", "priority": 3}}
+{"t": 200, "kind": "plan", "dispatcher": "baseline", "trigger": "priority_change", "queues": {"T1": [], "T2": [], "T3": ["job:J5"]}, "explanation": "FCFS: no changes", "warnings": []}
+{"t": 225, "kind": "job_completed", "dispatcher": "baseline", "job": "J5", "tractor": "T3", "on_time": false, "deadline": 200, "worked_by": ["T3"]}
+{"t": 225, "kind": "assignment", "dispatcher": "baseline", "job": "J7", "tractor": "T3", "previous": null}
+{"t": 225, "kind": "plan", "dispatcher": "baseline", "trigger": null, "queues": {"T1": [], "T2": [], "T3": ["job:J7"]}, "explanation": "FCFS: J7->T3", "warnings": []}
+{"t": 240, "kind": "event", "dispatcher": "baseline", "event": "new_job", "params": {"job": {"id": "J11", "type": "spray", "field": "F6", "priority": 2, "deadline": 420, "submitted_at": 240}}}
+{"t": 240, "kind": "plan", "dispatcher": "baseline", "trigger": "new_job", "queues": {"T1": [], "T2": [], "T3": ["job:J7"]}, "explanation": "FCFS: no changes", "warnings": []}
+{"t": 241, "kind": "job_started", "dispatcher": "baseline", "job": "J7", "tractor": "T3", "remaining": 1.0}
+{"t": 321, "kind": "job_completed", "dispatcher": "baseline", "job": "J7", "tractor": "T3", "on_time": true, "deadline": 460, "worked_by": ["T3"]}
+{"t": 321, "kind": "assignment", "dispatcher": "baseline", "job": "J10", "tractor": "T3", "previous": null}
+{"t": 321, "kind": "plan", "dispatcher": "baseline", "trigger": null, "queues": {"T1": [], "T2": [], "T3": ["job:J10"]}, "explanation": "FCFS: J10->T3", "warnings": []}
+{"t": 367, "kind": "job_started", "dispatcher": "baseline", "job": "J10", "tractor": "T3", "remaining": 1.0}
+{"t": 427, "kind": "job_completed", "dispatcher": "baseline", "job": "J10", "tractor": "T3", "on_time": false, "deadline": 360, "worked_by": ["T3"]}
+{"t": 427, "kind": "plan", "dispatcher": "baseline", "trigger": null, "queues": {"T1": [], "T2": [], "T3": []}, "explanation": "FCFS: no changes", "warnings": []}
+{"t": 480, "kind": "run_end", "dispatcher": "baseline", "summary": {"ticks": 480, "jobs_total": 11, "jobs_completed": 6, "deadlines_met": 4, "priority_weighted_work": 12.84, "priority_weighted_max": 22, "travel_ticks": 221, "travel_km": 47.9, "idle_ticks": 53, "fuel_used": 233.4, "violations": 1, "replans": 12, "per_tractor": {"T1": {"travel_ticks": 44, "travel_km": 11.0, "work_ticks": 106, "idle_ticks": 0, "refuel_ticks": 0, "broken_ticks": 330, "fuel_used": 60.0}, "T2": {"travel_ticks": 30, "travel_km": 7.5, "work_ticks": 30, "idle_ticks": 0, "refuel_ticks": 0, "broken_ticks": 420, "fuel_used": 24.0}, "T3": {"travel_ticks": 147, "travel_km": 29.4, "work_ticks": 280, "idle_ticks": 53, "refuel_ticks": 0, "broken_ticks": 0, "fuel_used": 149.4}}}}

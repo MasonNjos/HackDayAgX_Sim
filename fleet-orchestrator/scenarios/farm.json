@@ -1,0 +1,76 @@
+{
+  "meta": {
+    "name": "River farm",
+    "horizon": 480,
+    "units": "1 tick = 1 minute; km; litres; hectares",
+    "notes": [
+      "A river splits the farm. The bridge (west-east) is the short crossing; the south road is a long detour.",
+      "Jobs are submitted far-first and the most urgent job (J6) is submitted late, which hurts FCFS.",
+      "T1 starts low on fuel. T2 breaks down mid-job at t=60; T1 is the only other sprayer.",
+      "T3 is the only mower, so if it broke down, mowing jobs would be unassignable."
+    ]
+  },
+  "nodes": [
+    {"id": "depot",   "x": 1, "y": 5},
+    {"id": "west",    "x": 3, "y": 5},
+    {"id": "nw",      "x": 3, "y": 8},
+    {"id": "sw",      "x": 3, "y": 2},
+    {"id": "east",    "x": 6, "y": 5},
+    {"id": "ne",      "x": 6, "y": 8},
+    {"id": "se",      "x": 6, "y": 2},
+    {"id": "far_e",   "x": 9, "y": 5},
+    {"id": "far_ne",  "x": 9, "y": 8}
+  ],
+  "edges": [
+    {"id": "depot_road", "a": "depot", "b": "west",   "length": 2},
+    {"id": "w_north",    "a": "west",  "b": "nw",     "length": 3},
+    {"id": "w_south",    "a": "west",  "b": "sw",     "length": 3},
+    {"id": "bridge",     "a": "west",  "b": "east",   "length": 3, "label": "bridge"},
+    {"id": "south_road", "a": "sw",    "b": "se",     "length": 3.2, "label": "south crossing"},
+    {"id": "e_north",    "a": "east",  "b": "ne",     "length": 3},
+    {"id": "e_south",    "a": "east",  "b": "se",     "length": 3},
+    {"id": "e_far",      "a": "east",  "b": "far_e",  "length": 3},
+    {"id": "ne_far",     "a": "ne",    "b": "far_ne", "length": 3},
+    {"id": "far_link",   "a": "far_e", "b": "far_ne", "length": 3}
+  ],
+  "depots": [
+    {"id": "D1", "node": "depot"}
+  ],
+  "fields": [
+    {"id": "F1", "name": "North Pasture", "node": "nw",     "area": 15},
+    {"id": "F2", "name": "South Meadow",  "node": "sw",     "area": 15},
+    {"id": "F3", "name": "Home Field",    "node": "west",   "area": 10},
+    {"id": "F4", "name": "Ridge",         "node": "ne",     "area": 20},
+    {"id": "F5", "name": "River Flats",   "node": "east",   "area": 25},
+    {"id": "F6", "name": "Bottom Field",  "node": "se",     "area": 20},
+    {"id": "F7", "name": "Far East",      "node": "far_e",  "area": 30},
+    {"id": "F8", "name": "Top Corner",    "node": "far_ne", "area": 20}
+  ],
+  "tractors": [
+    {"id": "T1", "implement": "sprayer", "capabilities": ["spray"], "speed": 0.25, "work_rate": 0.5,
+     "fuel": 60,  "fuel_capacity": 200, "burn_per_km": 0.5, "burn_per_work_tick": 0.4, "reserve": 0.1},
+    {"id": "T2", "implement": "sprayer", "capabilities": ["spray"], "speed": 0.25, "work_rate": 0.5,
+     "fuel": 180, "fuel_capacity": 200, "burn_per_km": 0.5, "burn_per_work_tick": 0.4, "reserve": 0.1},
+    {"id": "T3", "implement": "mower",   "capabilities": ["mow"],   "speed": 0.2,  "work_rate": 0.25,
+     "fuel": 190, "fuel_capacity": 200, "burn_per_km": 0.6, "burn_per_work_tick": 0.3, "reserve": 0.1}
+  ],
+  "jobs": [
+    {"id": "J1",  "type": "spray", "field": "F7", "priority": 1, "deadline": 400, "submitted_at": 0},
+    {"id": "J2",  "type": "spray", "field": "F1", "priority": 2, "deadline": 240, "submitted_at": 0},
+    {"id": "J3",  "type": "mow",   "field": "F4", "priority": 1, "deadline": 420, "submitted_at": 0},
+    {"id": "J4",  "type": "spray", "field": "F5", "priority": 2, "deadline": 300, "submitted_at": 0},
+    {"id": "J5",  "type": "mow",   "field": "F2", "priority": 2, "deadline": 200, "submitted_at": 0},
+    {"id": "J6",  "type": "spray", "field": "F3", "priority": 3, "deadline": 90,  "submitted_at": 0},
+    {"id": "J7",  "type": "mow",   "field": "F6", "priority": 1, "deadline": 460, "submitted_at": 0},
+    {"id": "J8",  "type": "spray", "field": "F8", "priority": 1, "deadline": 450, "submitted_at": 0},
+    {"id": "J9",  "type": "spray", "field": "F2", "priority": 3, "deadline": 150, "submitted_at": 0},
+    {"id": "J10", "type": "mow",   "field": "F1", "priority": 2, "deadline": 360, "submitted_at": 0}
+  ],
+  "events": [
+    {"t": 60,  "kind": "breakdown",       "params": {"tractor": "T2"}},
+    {"t": 150, "kind": "route_blocked",   "params": {"edge": "bridge"}},
+    {"t": 200, "kind": "priority_change", "params": {"job": "J7", "priority": 3}},
+    {"t": 240, "kind": "new_job",         "params": {"job": {"id": "J11", "type": "spray", "field": "F6",
+                                                             "priority": 2, "deadline": 420, "submitted_at": 240}}}
+  ]
+}

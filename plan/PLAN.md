@@ -22,7 +22,7 @@ fleet-orchestrator/
     baseline.py             # FCFS dispatcher, same sim, for comparison
     metrics.py              # jobs done, deadlines met, travel, idle, fuel
     eventlog.py             # JSONL event log
-  server.py                 # Flask/FastAPI: state JSON, POST events/jobs, /why/<job>
+  server.py                 # FastAPI (uvicorn): state JSON, POST events/jobs, /why/<job>
   dashboard/index.html      # grid map + tractor table + job table + log + buttons
   run_demo.py               # runs scripted scenario for both dispatchers, writes outputs
   tests/                    # invariants + scenario tests
@@ -77,7 +77,7 @@ Single HTML page polling `/state`: grid map with fields (coloured by status/prio
 ## Verification
 - Unit tests: invariants (single owner per job, no incompatible implements, fuel never negative, completed work never reassigned or double-counted) checked after every tick in randomised scenarios (multiple seeds, random breakdown times).
 - Scenario tests: breakdown mid-job, breakdown of the only compatible tractor (job reported unassignable with the reason), blocked bridge, priority flip, low fuel.
-- Demo run: `python run_demo.py` produces `out/event_log.jsonl` and `out/comparison.md`; coordinator must beat baseline on jobs done and travel/idle with 0 violations. Then `python server.py` and open the dashboard to check the visual flow end to end.
+- Demo run: `python run_demo.py` produces `out/event_log.jsonl` and `out/comparison.md`; coordinator must beat baseline on jobs done and travel/idle with 0 violations. Then `uvicorn server:app` and open the dashboard to check the visual flow end to end.
 
 ## Hand-in checklist
 Code link, README (how to run; own simulation), `scenarios/farm.json`, `out/event_log.jsonl`, `out/comparison.md`.

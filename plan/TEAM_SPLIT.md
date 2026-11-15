@@ -67,7 +67,7 @@ This half hour is what lets you work in parallel for the next four hours. Write 
 ## Block 2: 2:15–3:30, must-haves
 
 **A**
-- `server.py`: run the sim in a background thread with a lock around state. Routes: `GET /state`, `POST /event`, `POST /jobs`, `GET /why/<job>`, `POST /speed`.
+- `server.py` (FastAPI + uvicorn): start the sim in a background thread from the app's `lifespan`, with a `threading.Lock` around state. Write endpoints as plain `def`, not `async def`, so FastAPI runs them in its threadpool and a blocking lock can't stall the event loop. Serve `dashboard/` with `StaticFiles`. Routes: `GET /state`, `POST /event`, `POST /jobs`, `GET /why/<job>`, `POST /speed`.
 - `dashboard/index.html`: grid map with fields, tractors, routes and fuel bars; job table; explanation panel; event log; buttons for Break down, Add job/Submit job list, and speed.
 
 **B**

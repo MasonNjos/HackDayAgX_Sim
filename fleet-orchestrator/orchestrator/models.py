@@ -56,6 +56,7 @@ class Field:
 
 IMPLEMENT_JOBS: dict[str, list[str]] = {"sprayer": ["spray"], "mower": ["mow"]}
 FUEL_RESERVE = 0.10  # fraction of capacity no plan may go below
+REFUEL_TICKS = 5     # ticks spent at a depot refilling to fuel_capacity
 
 
 @dataclass
@@ -155,6 +156,21 @@ class Dispatcher(Protocol):
         a tractor finishes its queue. The sim executes the head of each queue and
         never interrupts a tractor's in-progress job unless it has broken down.
         A queue whose head is the tractor's current job means "keep going".
+
+        Agreed rules between the sim and the dispatchers:
+        1. plan() is pure: it never mutates `state`. The sim sets job.owner and
+           job.status (ASSIGNED / IN_PROGRESS / UNASSIGNABLE) when it commits a plan.
+        2. tractor.current_job is set while the tractor travels to the job as well
+           as while it works on it. Dispatchers keep it at the head of its queue.
+        3. A Stop("refuel", depot_id): drive to the depot node, wait REFUEL_TICKS,
+           and fill the tank to fuel_capacity.
+        4. UNASSIGNABLE means "no tractor can take it right now", not cancelled.
+           If a queued job is UNASSIGNABLE, the sim sets it back to ASSIGNED and
+           works it; it must never skip it. Jobs named as unassignable in
+           plan.warnings may be marked UNASSIGNABLE for display.
+        5. Dispatchers plan a travelling tractor from tractor.location (the last
+           node it passed). If its queue changes mid-road, the sim finishes the
+           current road segment, then follows the new route from that node.
         """
         ...
 

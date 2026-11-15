@@ -9,12 +9,15 @@ Writes:
 """
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 from orchestrator.baseline import FCFSDispatcher
 from orchestrator.eventlog import EventLog
 from orchestrator.fleet_agent import FleetAgent
+from orchestrator.llm_agent import LLMFleetAgent
+from orchestrator.maintenance_agent import MaintenanceAgent
 from orchestrator.models import load_scenario
 from orchestrator.sim import Sim
 
@@ -26,6 +29,7 @@ def run_one(scenario: Path, dispatcher, log_path: Path) -> tuple[dict, Sim]:
     state, events, meta = load_scenario(scenario)
     log = EventLog(log_path, dispatcher=dispatcher.name)
     sim = Sim(state, events, dispatcher, log, horizon=meta.get("horizon", 480))
+    MaintenanceAgent().attach(sim)  # same repair crews for baseline and coordinator
     try:
         summary = sim.run()
     finally:
@@ -83,7 +87,10 @@ def main() -> None:
     scenario = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "scenarios" / "farm.json"
     OUT.mkdir(exist_ok=True)
     base, base_sim = run_one(scenario, FCFSDispatcher(), OUT / "event_log_baseline.jsonl")
-    coord, coord_sim = run_one(scenario, FleetAgent(), OUT / "event_log.jsonl")
+    # COORDINATOR=llm (in .env) runs the Claude coordinator; anything else the greedy one.
+    coordinator = LLMFleetAgent() if os.environ.get("COORDINATOR", "greedy") == "llm" else FleetAgent()
+    print(f"Coordinator: {coordinator.name}", flush=True)
+    coord, coord_sim = run_one(scenario, coordinator, OUT / "event_log.jsonl")
     md = comparison_md(scenario, base, coord, coord_sim, base_sim)
     (OUT / "comparison.md").write_text(md, encoding="utf-8")
     print(md)

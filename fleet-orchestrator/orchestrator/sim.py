@@ -56,6 +56,7 @@ class Sim:
         self.stall_reason: dict[str, str] = {}
         self.refuel_wait: dict[str, tuple[str, int]] = {}  # tractor -> (depot, ticks waited there)
         self.why: dict[str, dict] = {}
+        self.observers: list = []  # objects with on_event(sim, event), called after each event, before the replan
         self.last_explanation = ""
         self.last_warnings: list[str] = []
         self._unreachable_logged: set[tuple[str, str]] = set()
@@ -94,12 +95,17 @@ class Sim:
         while self.pending_events and self.pending_events[0].t <= self.t:
             ev = self.pending_events.pop(0)
             self.apply_event(ev)
+            for obs in self.observers:  # e.g. the Maintenance agent scheduling a repair
+                obs.on_event(self, ev)
             self.replan(ev)
 
         need_replan = False
         for tid in sorted(self.state.tractors):
             need_replan |= self._step_tractor(tid)
             self._sync_current(tid)
+        for obs in self.observers:  # e.g. the Maintenance agent spotting a tractor that ran out of fuel
+            if hasattr(obs, "on_tick"):
+                obs.on_tick(self)
 
         self.metrics.record_tick(self.state)
         self.state.t += 1

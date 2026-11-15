@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { boundsOf, toLatLng } from "../geo";
+import { boundsOf, squareBeside, toLatLng } from "../geo";
 import { fieldJob, TRACTOR_COLORS } from "./FarmMap";
 import type { Edge, State, Tractor } from "../types";
 
@@ -31,8 +31,7 @@ const TILES = "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imager
 const ATTRIBUTION = "Tiles &copy; Esri &mdash; Source: Esri, Maxar, Earthstar Geographics, and the GIS User Community";
 
 const TRACTOR_PX = 22;    // tractor marker diameter
-const TRACTOR_SPREAD = 16; // px between tractors standing on the same node
-const TRACTOR_LIFT = 20;   // px the marker sits above its position
+const TRACTOR_SPREAD = 16; // px between tractors standing on the same spot
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 const lines = (s: string) => esc(s).replace(/\n/g, "<br>");
@@ -104,11 +103,12 @@ export function SatMap({ state, selectedJob, onSelectJob, onToggleEdge }: Props)
     for (const f of state.fields) {
       const jobs = state.jobs.filter((j) => j.field === f.id);
       const j = fieldJob(jobs);
-      const half = Math.sqrt(f.area * 10_000) / 1000 / 2; // ha -> km, half the side
+      const side = Math.sqrt(f.area * 10_000) / 1000; // ha -> km
       const selected = jobs.some((x) => x.id === selectedJob);
       const progress = j?.status === "in_progress" ? ` · ${Math.round((1 - j.remaining) * 100)}% done` : "";
       const title = `${f.name} (${f.area} ha)${progress}\n${jobs.map((x) => `${x.id} ${x.type} P${x.priority} ${x.status}`).join("\n")}`;
-      const rect = L.rectangle([toLatLng(f.x - half, f.y - half), toLatLng(f.x + half, f.y + half)], {
+      // On the farmland beside the crossing (the field's corner is where tractors work).
+      const rect = L.rectangle(squareBeside(f.x, f.y, side), {
         className: `sat-field status-${j?.status ?? "none"}${selected ? " selected" : ""}`,
         weight: selected ? 4 : 1.5,
       }).bindTooltip(lines(title), { sticky: true });
@@ -134,10 +134,16 @@ export function SatMap({ state, selectedJob, onSelectJob, onToggleEdge }: Props)
     const known = tractorsRef.current;
     const seen = new Set<string>();
 
+    // Tractors sit on the road; ones standing on the same spot fan out sideways.
+    const spot = (t: Tractor) => `${t.x.toFixed(2)},${t.y.toFixed(2)}`;
+    const sharing = new Map<string, string[]>();
+    for (const t of state.tractors) sharing.set(spot(t), [...(sharing.get(spot(t)) ?? []), t.id]);
+
     state.tractors.forEach((t, i) => {
       seen.add(t.id);
       const color = TRACTOR_COLORS[i % TRACTOR_COLORS.length];
-      const ox = (i - (state.tractors.length - 1) / 2) * TRACTOR_SPREAD;
+      const group = sharing.get(spot(t))!;
+      const ox = (group.indexOf(t.id) - (group.length - 1) / 2) * TRACTOR_SPREAD;
       const html = tractorHtml(t, color);
       const route = t.route.length > 1 ? t.route.map(([x, y]) => toLatLng(x, y)) : [];
       let layer = known.get(t.id);
@@ -158,7 +164,7 @@ export function SatMap({ state, selectedJob, onSelectJob, onToggleEdge }: Props)
       if (layer.html !== key) {
         const r = TRACTOR_PX / 2;
         layer.marker.setIcon(L.divIcon({
-          className: "", html, iconSize: [TRACTOR_PX, TRACTOR_PX], iconAnchor: [r - ox, r + TRACTOR_LIFT],
+          className: "", html, iconSize: [TRACTOR_PX, TRACTOR_PX], iconAnchor: [r - ox, r],
         }));
         layer.html = key;
       }

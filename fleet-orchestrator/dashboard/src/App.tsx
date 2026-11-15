@@ -75,6 +75,11 @@ export default function App() {
         </div>
       </header>
 
+      {state.error && (
+        <div className="error" role="alert">
+          Simulation stopped on an error: {state.error}. Use “reset as” to start over.
+        </div>
+      )}
       {error && <div className="error" role="alert">{error}<button className="small-btn" onClick={() => setError(null)}>×</button></div>}
 
       <section className="kpis">

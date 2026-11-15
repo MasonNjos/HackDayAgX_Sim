@@ -67,6 +67,7 @@ export interface State {
   log: LogRecord[];
   metrics: Summary;
   speed: { ticks_per_sec: number; paused: boolean };
+  error?: string | null;  // set when the sim hit an exception; cleared by Reset
 }
 
 export interface Why { job: string; record: Record<string, unknown> | null; text: string }

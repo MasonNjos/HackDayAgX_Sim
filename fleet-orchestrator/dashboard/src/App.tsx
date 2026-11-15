@@ -1,16 +1,25 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
 import { FarmMap } from "./components/FarmMap";
+import { SatMap } from "./components/SatMap";
 import { EventLog, ExplanationPanel, OperatorControls, WhyPanel, sourceLabel } from "./components/Panels";
 import { JobTable, TractorTable } from "./components/Tables";
 import type { Edge, State, Why } from "./types";
 
 const POLL_MS = 400;
+const VIEW_KEY = "fleet.mapView";
+type MapView = "map" | "satellite";
+
+function loadView(): MapView {
+  try { return localStorage.getItem(VIEW_KEY) === "satellite" ? "satellite" : "map"; } catch { return "map"; }
+}
 
 export default function App() {
   const [state, setState] = useState<State | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [why, setWhy] = useState<Why | null>(null);
+  const [view, setView] = useState<MapView>(loadView);
+  const pickView = (v: MapView) => { setView(v); try { localStorage.setItem(VIEW_KEY, v); } catch { /* ignore */ } };
 
   // Poll /api/state. Actions also return the fresh state, so the UI updates at once.
   useEffect(() => {
@@ -94,8 +103,16 @@ export default function App() {
 
       <main>
         <section className="card map-card">
-          <h2>Farm</h2>
-          <FarmMap state={state} selectedJob={why?.job ?? null} onSelectJob={showWhy} onToggleEdge={toggleEdge} />
+          <div className="map-head">
+            <h2>Farm</h2>
+            <div className="view-toggle" role="group" aria-label="Map view">
+              <button className={view === "map" ? "on" : ""} aria-pressed={view === "map"} onClick={() => pickView("map")}>Map</button>
+              <button className={view === "satellite" ? "on" : ""} aria-pressed={view === "satellite"} onClick={() => pickView("satellite")}>Satellite</button>
+            </div>
+          </div>
+          {view === "map"
+            ? <FarmMap state={state} selectedJob={why?.job ?? null} onSelectJob={showWhy} onToggleEdge={toggleEdge} />
+            : <SatMap state={state} selectedJob={why?.job ?? null} onSelectJob={showWhy} onToggleEdge={toggleEdge} />}
           <Legend />
         </section>
 

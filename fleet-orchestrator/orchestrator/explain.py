@@ -10,7 +10,7 @@ Owner: Person B. Templated text only (no network), so the demo never depends on 
 """
 from __future__ import annotations
 
-from .models import DONE, IN_PROGRESS, Event, Plan, Stop, WorldState
+from .models import BROKEN, DONE, IN_PROGRESS, Event, Plan, Stop, WorldState
 
 VERBS = {"spray": "spraying", "mow": "mowing"}
 PRIORITY = {1: "low", 2: "medium", 3: "high"}
@@ -90,7 +90,7 @@ def diff_plans(old_queues: dict[str, list[Stop]] | None, new_queues: dict[str, l
 # --- plan-change explanation -------------------------------------------------------
 
 def _breakdown_lead(tid: str, old_queues: dict[str, list[Stop]] | None,
-                    state: WorldState, t: int) -> tuple[str, str | None]:
+                    state: WorldState, t: int, what: str = "broke down") -> tuple[str, str | None]:
     """'T2 broke down at t=40 while spraying River Flats (60% done).' plus the job it was on.
 
     The current state is checked first: the sim has just released the job, the tractor
@@ -99,25 +99,40 @@ def _breakdown_lead(tid: str, old_queues: dict[str, list[Stop]] | None,
     """
     tr = state.tractors.get(tid)
     loc = tr.location if tr else None
-    for j in state.jobs.values():
-        if (j.status != DONE and j.owner is None and j.remaining < 1.0 and j.completed_by
-                and j.completed_by[-1] == tid and j.field in state.fields and state.job_node(j.id) == loc):
-            pct = round((1.0 - j.remaining) * 100)
-            return f"{tid} broke down at t={t} while {job_phrase(state, j.id)} ({pct}% done).", j.id
-
     head: Stop | None = None
     for s in (old_queues or {}).get(tid, []):
         if s.kind == "refuel" or (s.target in state.jobs and state.jobs[s.target].status != DONE):
             head = s
             break
+
+    working = [j for j in state.jobs.values()
+               if j.status != DONE and j.owner is None and j.remaining < 1.0 and j.completed_by
+               and j.completed_by[-1] == tid and j.field in state.fields and state.job_node(j.id) == loc]
+    if working:
+        # Two part-done jobs on one field: prefer the one the last plan had at the head.
+        j = next((w for w in working if head is not None and head.target == w.id), working[0])
+        pct = round((1.0 - j.remaining) * 100)
+        return f"{tid} {what} at t={t} while {job_phrase(state, j.id)} ({pct}% done).", j.id
+
     if head is None:
-        return f"{tid} broke down at t={t} while idle.", None
+        return f"{tid} {what} at t={t} while idle.", None
     if head.kind == "refuel":
         depot = state.depots.get(head.target)
         if depot and depot.node == loc:
-            return f"{tid} broke down at t={t} while refuelling at {head.target}.", None
-        return f"{tid} broke down at t={t} on its way to refuel at {head.target}.", None
-    return f"{tid} broke down at t={t} on its way to {_field_name(state, head.target)} ({head.target}).", head.target
+            return f"{tid} {what} at t={t} while refuelling at {head.target}.", None
+        return f"{tid} {what} at t={t} on its way to refuel at {head.target}.", None
+    field = _field_name(state, head.target)
+    if head.target in state.jobs and state.jobs[head.target].field in state.fields \
+            and state.job_node(head.target) == loc:
+        return f"{tid} {what} at t={t} just as it reached {field} ({head.target}).", head.target
+    return f"{tid} {what} at t={t} on its way to {field} ({head.target}).", head.target
+
+
+def _stopped_tractors(old_queues: dict[str, list[Stop]] | None, state: WorldState) -> list[str]:
+    """Tractors that went out of service since the last plan without a breakdown event
+    (the sim stalls a tractor that runs dry): broken now, but the last plan gave them work."""
+    return [tid for tid, q in sorted((old_queues or {}).items())
+            if q and tid in state.tractors and state.tractors[tid].status == BROKEN]
 
 
 def _lead(trigger: Event | None, old_queues, state: WorldState) -> tuple[str, str | None, str | None]:
@@ -126,7 +141,12 @@ def _lead(trigger: Event | None, old_queues, state: WorldState) -> tuple[str, st
     if trigger is None:
         if old_queues is None:
             return f"Initial plan at t={t}.", None, None
-        return f"Replanned at t={t} as tractors finished their queues.", None, None
+        stopped = _stopped_tractors(old_queues, state)
+        if not stopped:
+            return f"Replanned at t={t}.", None, None
+        lines = [_breakdown_lead(tid, old_queues, state, t, "went out of service") for tid in stopped]
+        lead = f"Replanned at t={t}. " + " ".join(line for line, _ in lines)
+        return lead, stopped[0], lines[0][1]
     p, k = trigger.params, trigger.kind
     if k == "breakdown":
         lead, job = _breakdown_lead(p.get("tractor", "?"), old_queues, state, t)
@@ -147,9 +167,15 @@ def _lead(trigger: Event | None, old_queues, state: WorldState) -> tuple[str, st
         return (f"{p.get('job')} priority changed to {pr} ({PRIORITY.get(pr, pr)}) at t={t}; "
                 f"queued jobs re-scored, jobs in progress untouched."), None, None
     if k == "new_job":
-        jid = (p.get("job") or {}).get("id", "?")
+        d = p.get("job") or {}
+        jid = d.get("id", "?")
         if jid in state.jobs:
             j = state.jobs[jid]
+            # The sim ignores a new_job whose id already exists; spot that by comparing fields.
+            same = (j.type == d.get("type") and j.field == d.get("field") and j.deadline == d.get("deadline")
+                    and j.submitted_at == d.get("submitted_at", t))
+            if not same:
+                return f"New job {jid} was ignored at t={t}: a job with that id already exists.", None, None
             return (f"New job {jid} ({job_phrase(state, jid)}, deadline t={j.deadline}) "
                     f"submitted at t={t}."), None, None
         return f"New job {jid} submitted at t={t}.", None, None

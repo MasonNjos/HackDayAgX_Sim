@@ -1,13 +1,30 @@
-# Dev setup: the source folder is mounted, so code edits show up without rebuilding.
-#   docker compose up --build            -> server + dashboard at http://localhost:8000 (auto-reload)
-#   docker compose run --rm app pytest   -> tests
-#   docker compose run --rm app python run_demo.py   -> writes out/ on your machine
-# Rebuild (--build) only after changing requirements.txt.
+# Dev setup: source folders are mounted, so code edits show up without rebuilding.
+#   docker compose up --build                       -> dashboard (hot reload) at http://localhost:5173
+#                                                      API at http://localhost:8000/api/state
+#   docker compose run --rm app pytest              -> tests
+#   docker compose run --rm app python run_demo.py  -> writes out/ on your machine
+# Demo / judges (one URL, built dashboard served by the API):
+#   docker build -t fleet . && docker run --rm -p 8000:8000 fleet   -> http://localhost:8000
+# Rebuild (--build) only after changing requirements.txt or dashboard/package.json.
 services:
   app:
     build: .
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"   # set API_PORT if 8000 is busy on your machine
     volumes:
       - .:/app
     command: uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+
+  web:
+    image: node:22-alpine
+    working_dir: /web
+    ports:
+      - "${WEB_PORT:-5173}:5173"   # set WEB_PORT if 5173 is busy on your machine
+    volumes:
+      - ./dashboard:/web
+      - /web/node_modules          # keep the container's node_modules separate from the host's
+    environment:
+      VITE_API_TARGET: http://app:8000
+    command: sh -c "npm ci && npm run dev"
+    depends_on:
+      - app

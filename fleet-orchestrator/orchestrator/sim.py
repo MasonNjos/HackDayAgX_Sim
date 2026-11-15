@@ -12,6 +12,10 @@ offending stop is dropped): one owner per job, implement must match the job, no 
 broken tractors, never reassign a completed job, never preempt a job in progress.
 A tractor that runs out of fuel stalls in place (status BROKEN) and that is a violation.
 
+Contract rules from models.Dispatcher implemented here: tractor.current_job is the job at
+the head of its queue, while travelling to it as well as while working on it (rule 2); a
+refuel stop waits REFUEL_TICKS at the depot, then fills the tank (rule 3).
+
 1 tick = 1 sim minute. Movement is along graph edges; a tractor re-routes at every node,
 so a newly blocked edge takes effect at the next node it reaches.
 """
@@ -23,9 +27,8 @@ from . import nav_agent as nav
 from .eventlog import EventLog
 from .metrics import Metrics
 from .models import (ASSIGNED, BROKEN, DONE, IDLE, IN_PROGRESS, PENDING, REFUELLING, TRAVELLING,
-                     WORKING, Dispatcher, Event, Plan, Stop, WorldState, job_from_dict)
+                     REFUEL_TICKS, WORKING, Dispatcher, Event, Plan, Stop, WorldState, job_from_dict)
 
-REFUEL_RATE = 20.0  # litres per tick at a depot
 EPS = 1e-9
 
 
@@ -51,6 +54,7 @@ class Sim:
         self.queues: dict[str, list[Stop]] = {tid: [] for tid in state.tractors}
         self.legs: dict[str, Leg | None] = {tid: None for tid in state.tractors}
         self.stall_reason: dict[str, str] = {}
+        self.refuel_wait: dict[str, tuple[str, int]] = {}  # tractor -> (depot, ticks waited there)
         self.why: dict[str, dict] = {}
         self.last_explanation = ""
         self.last_warnings: list[str] = []
@@ -95,6 +99,7 @@ class Sim:
         need_replan = False
         for tid in sorted(self.state.tractors):
             need_replan |= self._step_tractor(tid)
+            self._sync_current(tid)
 
         self.metrics.record_tick(self.state)
         self.state.t += 1
@@ -225,6 +230,8 @@ class Sim:
                 job.status, job.owner = PENDING, None
 
         self.queues = new_queues
+        for tid in s.tractors:
+            self._sync_current(tid)
         self.why.update(plan.why or {})
         self.last_explanation = plan.explanation
         self.last_warnings = list(plan.warnings)
@@ -238,6 +245,16 @@ class Sim:
                        explanation=plan.explanation, warnings=plan.warnings)
 
     # ------------------------------------------------------------------ movement / work
+
+    def _sync_current(self, tid: str) -> None:
+        """Contract rule 2: current_job is the job at the head of the queue (travelling or working)."""
+        tr = self.state.tractors[tid]
+        q = self.queues[tid]
+        tr.current_job = q[0].target if (tr.status != BROKEN and q and q[0].kind == "job") else None
+        # Reset the refuel wait unless the head is still a refuel at the same depot.
+        wait = self.refuel_wait.get(tid)
+        if wait and not (q and q[0].kind == "refuel" and q[0].target == wait[0]):
+            self.refuel_wait.pop(tid, None)
 
     def _stop_node(self, stop: Stop) -> str:
         if stop.kind == "refuel":
@@ -306,9 +323,14 @@ class Sim:
         # At the stop.
         if stop.kind == "refuel":
             tr.status = REFUELLING
-            tr.current_job = None
-            tr.fuel = min(tr.fuel_capacity, tr.fuel + REFUEL_RATE)
-            if tr.fuel >= tr.fuel_capacity - EPS:
+            depot, waited = self.refuel_wait.get(tid, (stop.target, 0))
+            if depot != stop.target:  # head changed depot without a sync; start over
+                waited = 0
+            waited += 1
+            self.refuel_wait[tid] = (stop.target, waited)
+            if waited >= REFUEL_TICKS:
+                tr.fuel = tr.fuel_capacity
+                self.refuel_wait.pop(tid, None)
                 q.pop(0)
                 self.log.write(self.t, "refuelled", tractor=tid, fuel=tr.fuel)
                 return not q

@@ -397,6 +397,18 @@ class Sim:
         f = leg.done_km / leg.length if leg.length else 1.0
         return a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f
 
+    def _route_points(self, tid: str) -> list[list[float]]:
+        """[x, y] points from the tractor's position to its queue head (for drawing)."""
+        s, q = self.state, self.queues[tid]
+        if not q or s.tractors[tid].status == BROKEN:
+            return []
+        leg = self.legs[tid]
+        start = leg.b if leg else s.tractors[tid].location
+        r = nav.route(s, start, self._stop_node(q[0]))
+        if r is None:
+            return []
+        return [list(self.position(tid))] + [[s.nodes[n].x, s.nodes[n].y] for n in r[0]]
+
     def snapshot(self) -> dict:
         """JSON-able view of everything the dashboard needs."""
         s = self.state
@@ -408,6 +420,7 @@ class Sim:
                 "location": tr.location, "fuel": round(tr.fuel, 1), "fuel_capacity": tr.fuel_capacity,
                 "current_job": tr.current_job, "stall_reason": self.stall_reason.get(tr.id),
                 "queue": [f"{st.kind}:{st.target}" for st in self.queues[tr.id]],
+                "route": self._route_points(tr.id),
             })
         return {
             "t": s.t, "horizon": self.horizon, "finished": self.finished(),

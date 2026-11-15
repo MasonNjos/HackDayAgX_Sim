@@ -91,3 +91,47 @@ def test_tractor_that_ran_out_of_fuel_is_refuelled_and_repaired():
     assert any(r["action"] == "repair_crew_dispatched" and "out of fuel" in r["detail"] for r in fixes)
     assert any(r["action"] == "fuel_delivered" for r in fixes)
     assert sim.state.tractors[tid].status != BROKEN
+
+
+def test_dashboard_style_event_gets_a_repair():
+    """The server applies dashboard events through sim.process_event, outside step()."""
+    sim = make_sim([], road_min=10)
+    run_until(sim, 20)
+    sim.process_event(Event(sim.t, "route_blocked", {"edge": "south_road"}))
+    assert sim.maintenance.pending() == [{"kind": "edge", "id": "south_road", "fixed_at": sim.t + 10}]
+    run_until(sim, sim.t + 10)
+    assert "south_road" not in sim.state.blocked_edges
+
+
+def test_road_blocked_without_an_event_is_still_fixed():
+    sim = make_sim([], road_min=10)
+    run_until(sim, 5)
+    sim.state.blocked_edges |= {"e_south", "bridge"}      # bypasses events entirely
+    run_until(sim, 30)
+    assert not sim.state.blocked_edges & {"e_south", "bridge"}
+
+
+def test_blocked_road_reopens_even_when_it_cuts_off_a_job():
+    """Regression: both roads to Bottom Field blocked left J7 unreachable for good."""
+    sim = make_sim([Event(30, "route_blocked", {"edge": "e_south"}),
+                    Event(30, "route_blocked", {"edge": "south_road"})], road_min=10)
+    sim.run()
+    assert sim.state.jobs["J7"].status == "done"
+
+
+def test_leftover_crew_cannot_repair_a_later_breakdown_early():
+    sim = make_sim([], tractor_min=5)
+    run_until(sim, 10)
+    sim.process_event(Event(sim.t, "breakdown", {"tractor": "T2"}))   # crew booked for t+5
+    first = sim.t
+    sim.step()
+    sim.process_event(Event(sim.t, "repair", {"tractor": "T2"}))      # operator repairs it by hand
+    sim.step()
+    sim.process_event(Event(sim.t, "breakdown", {"tractor": "T2"}))   # breaks again: new crew
+    second = sim.t
+    assert sim.maintenance.pending() == [{"kind": "tractor", "id": "T2", "fixed_at": second + 5}]
+    run_until(sim, first + 5)                                           # the first crew's time
+    assert sim.state.tractors["T2"].status == BROKEN, "leftover crew repaired it early"
+    run_until(sim, second + 5)
+    assert sim.state.tractors["T2"].status != BROKEN
+    assert sim.maintenance.pending() == []

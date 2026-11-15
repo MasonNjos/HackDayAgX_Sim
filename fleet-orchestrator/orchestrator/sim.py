@@ -56,7 +56,10 @@ class Sim:
         self.stall_reason: dict[str, str] = {}
         self.refuel_wait: dict[str, tuple[str, int]] = {}  # tractor -> (depot, ticks waited there)
         self.why: dict[str, dict] = {}
-        self.observers: list = []  # objects with on_event(sim, event), called after each event, before the replan
+        # Observers (e.g. the Maintenance agent): on_event(sim, event) runs after each event and
+        # before its replan; optional on_tick(sim) runs every tick. Apply events only through
+        # process_event(), never apply_event() + replan() directly, or observers miss them.
+        self.observers: list = []
         self.last_explanation = ""
         self.last_warnings: list[str] = []
         self._unreachable_logged: set[tuple[str, str]] = set()
@@ -94,10 +97,7 @@ class Sim:
 
         while self.pending_events and self.pending_events[0].t <= self.t:
             ev = self.pending_events.pop(0)
-            self.apply_event(ev)
-            for obs in self.observers:  # e.g. the Maintenance agent scheduling a repair
-                obs.on_event(self, ev)
-            self.replan(ev)
+            self.process_event(ev)
 
         need_replan = False
         for tid in sorted(self.state.tractors):
@@ -113,6 +113,16 @@ class Sim:
             self.replan(None)
 
     # ------------------------------------------------------------------ events
+
+    def process_event(self, ev: Event) -> None:
+        """Apply an event, tell the observers (e.g. the Maintenance agent), then replan.
+
+        Every event goes through here, scripted or from the dashboard, so no observer misses one.
+        """
+        self.apply_event(ev)
+        for obs in self.observers:
+            obs.on_event(self, ev)
+        self.replan(ev)
 
     def apply_event(self, ev: Event) -> None:
         s, p = self.state, ev.params

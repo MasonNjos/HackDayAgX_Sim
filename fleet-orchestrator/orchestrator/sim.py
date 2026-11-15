@@ -1,0 +1,386 @@
+"""Discrete-tick simulator. Owner: Person A.
+
+The sim is the ONLY code that mutates WorldState. Dispatchers read state and return a
+Plan; the sim validates and applies it (job owner/status), moves tractors, burns fuel,
+progresses work, injects events and asks for a new plan:
+  - at the start (trigger=None),
+  - on every event (trigger=event),
+  - when a tractor finishes its queue or stalls (trigger=None).
+
+Hard rules enforced here (a plan that breaks one is logged as a violation and the
+offending stop is dropped): one owner per job, implement must match the job, no work for
+broken tractors, never reassign a completed job, never preempt a job in progress.
+A tractor that runs out of fuel stalls in place (status BROKEN) and that is a violation.
+
+1 tick = 1 sim minute. Movement is along graph edges; a tractor re-routes at every node,
+so a newly blocked edge takes effect at the next node it reaches.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from . import nav_agent as nav
+from .eventlog import EventLog
+from .metrics import Metrics
+from .models import (ASSIGNED, BROKEN, DONE, IDLE, IN_PROGRESS, PENDING, REFUELLING, TRAVELLING,
+                     WORKING, Dispatcher, Event, Plan, Stop, WorldState, job_from_dict)
+
+REFUEL_RATE = 20.0  # litres per tick at a depot
+EPS = 1e-9
+
+
+@dataclass
+class Leg:
+    """A tractor part-way along one edge."""
+    a: str            # node it left
+    b: str            # node it is heading to
+    edge: str
+    length: float
+    done_km: float = 0.0
+
+
+class Sim:
+    def __init__(self, state: WorldState, events: list[Event], dispatcher: Dispatcher,
+                 log: EventLog | None = None, horizon: int = 480):
+        self.state = state
+        self.pending_events = sorted(events, key=lambda e: e.t)
+        self.dispatcher = dispatcher
+        self.log = log or EventLog(dispatcher=getattr(dispatcher, "name", ""))
+        self.horizon = horizon
+        self.metrics = Metrics()
+        self.queues: dict[str, list[Stop]] = {tid: [] for tid in state.tractors}
+        self.legs: dict[str, Leg | None] = {tid: None for tid in state.tractors}
+        self.stall_reason: dict[str, str] = {}
+        self.why: dict[str, dict] = {}
+        self.last_explanation = ""
+        self.last_warnings: list[str] = []
+        self._unreachable_logged: set[tuple[str, str]] = set()
+        self.started = False
+
+    # ------------------------------------------------------------------ running
+
+    @property
+    def t(self) -> int:
+        return self.state.t
+
+    def finished(self) -> bool:
+        if self.t >= self.horizon:
+            return True
+        return not self.state.open_jobs() and not self.pending_events
+
+    def run(self) -> dict:
+        while not self.finished():
+            self.step()
+        self.log.write(self.t, "run_end", summary=self.metrics.summary(self.state))
+        return self.metrics.summary(self.state)
+
+    def inject(self, event: Event) -> None:
+        """Queue an event (e.g. from the dashboard). Applied at the start of the next step."""
+        event.t = max(event.t, self.t)
+        self.pending_events.append(event)
+        self.pending_events.sort(key=lambda e: e.t)
+
+    def step(self) -> None:
+        """Advance one tick."""
+        if not self.started:
+            self.started = True
+            self.log.write(self.t, "run_start", tractors=list(self.state.tractors), jobs=list(self.state.jobs))
+            self.replan(None)
+
+        while self.pending_events and self.pending_events[0].t <= self.t:
+            ev = self.pending_events.pop(0)
+            self.apply_event(ev)
+            self.replan(ev)
+
+        need_replan = False
+        for tid in sorted(self.state.tractors):
+            need_replan |= self._step_tractor(tid)
+
+        self.metrics.record_tick(self.state)
+        self.state.t += 1
+        if need_replan and not self.finished():
+            self.replan(None)
+
+    # ------------------------------------------------------------------ events
+
+    def apply_event(self, ev: Event) -> None:
+        s, p = self.state, ev.params
+        self.log.write(self.t, "event", event=ev.kind, params=p)
+        if ev.kind == "breakdown":
+            self._take_out_of_service(p["tractor"], "breakdown")
+        elif ev.kind == "repair":
+            tr = s.tractors[p["tractor"]]
+            if tr.status == BROKEN:
+                tr.status = IDLE
+                self.stall_reason.pop(tr.id, None)
+        elif ev.kind == "route_blocked":
+            s.blocked_edges.add(p["edge"])
+            self._unreachable_logged.clear()
+        elif ev.kind == "route_unblocked":
+            s.blocked_edges.discard(p["edge"])
+            self._unreachable_logged.clear()
+        elif ev.kind == "priority_change":
+            s.jobs[p["job"]].priority = int(p["priority"])
+        elif ev.kind == "new_job":
+            d = dict(p["job"])
+            d.setdefault("submitted_at", self.t)
+            job = job_from_dict(d)
+            s.jobs[job.id] = job
+        else:
+            self.log.write(self.t, "warning", detail=f"unknown event kind {ev.kind!r}")
+
+    def _take_out_of_service(self, tid: str, reason: str) -> None:
+        """Broken or out of fuel: release its work (keeping partial progress) and its queue."""
+        tr = self.state.tractors[tid]
+        tr.status = BROKEN
+        self.stall_reason[tid] = reason
+        for job in self.state.jobs.values():
+            if job.owner == tid and job.status in (ASSIGNED, IN_PROGRESS):
+                self.log.write(self.t, "job_released", job=job.id, tractor=tid, reason=reason,
+                               remaining=round(job.remaining, 3))
+                job.status, job.owner = PENDING, None
+        tr.current_job = None
+        self.queues[tid] = []
+
+    # ------------------------------------------------------------------ planning
+
+    def replan(self, trigger: Event | None) -> None:
+        try:
+            plan = self.dispatcher.plan(self.state, trigger)
+        except Exception as exc:  # a crashing dispatcher must not kill the demo
+            self.log.write(self.t, "dispatcher_error", error=repr(exc))
+            return
+        self.apply_plan(plan, trigger)
+
+    def apply_plan(self, plan: Plan, trigger: Event | None) -> None:
+        s = self.state
+        old_owner = {j.id: j.owner for j in s.jobs.values()}
+        owner: dict[str, str] = {}
+        new_queues: dict[str, list[Stop]] = {tid: [] for tid in s.tractors}
+
+        def violate(kind: str, detail: str) -> None:
+            v = self.metrics.add_violation(self.t, kind, detail)
+            self.log.write(self.t, "violation", violation=v["kind"], detail=v["detail"])
+
+        for tid, stops in plan.queues.items():
+            tr = s.tractors.get(tid)
+            if tr is None:
+                violate("unknown_tractor", f"plan has a queue for unknown tractor {tid}")
+                continue
+            if tr.status == BROKEN and stops:
+                violate("broken_tractor", f"plan gives work to out-of-service tractor {tid}")
+                continue
+            for stop in stops:
+                if stop.kind == "refuel":
+                    if stop.target not in s.depots:
+                        violate("bad_stop", f"{tid}: unknown depot {stop.target}")
+                        continue
+                    new_queues[tid].append(stop)
+                    continue
+                if stop.kind != "job" or stop.target not in s.jobs:
+                    violate("bad_stop", f"{tid}: unknown stop {stop.kind}:{stop.target}")
+                    continue
+                job = s.jobs[stop.target]
+                if job.status == DONE:
+                    violate("completed_reassigned", f"{job.id} is already done but was queued for {tid}")
+                    continue
+                if job.id in owner:
+                    violate("double_owner", f"{job.id} queued for both {owner[job.id]} and {tid}")
+                    continue
+                if job.type not in tr.capabilities:
+                    violate("incompatible", f"{tid} ({tr.implement}) cannot do {job.type} job {job.id}")
+                    continue
+                if job.status == IN_PROGRESS and job.owner not in (None, tid):
+                    violate("preempted", f"{job.id} is in progress on {job.owner}; plan moved it to {tid}")
+                    continue
+                owner[job.id] = tid
+                new_queues[tid].append(stop)
+
+        # A job in progress always stays at the head of its tractor's queue.
+        for tr in s.tractors.values():
+            cj = tr.current_job
+            if cj and tr.status == WORKING and s.jobs[cj].status == IN_PROGRESS:
+                q = [st for st in new_queues[tr.id] if not (st.kind == "job" and st.target == cj)]
+                new_queues[tr.id] = [Stop("job", cj)] + q
+                owner[cj] = tr.id
+
+        for job in s.jobs.values():
+            if job.status in (DONE,):
+                continue
+            if job.id in owner:
+                job.owner = owner[job.id]
+                if job.status != IN_PROGRESS:
+                    job.status = ASSIGNED
+            elif job.status in (ASSIGNED, IN_PROGRESS):
+                job.status, job.owner = PENDING, None
+
+        self.queues = new_queues
+        self.why.update(plan.why or {})
+        self.last_explanation = plan.explanation
+        self.last_warnings = list(plan.warnings)
+        self.metrics.replans += 1
+
+        for jid, tid in owner.items():
+            if old_owner.get(jid) != tid:
+                self.log.write(self.t, "assignment", job=jid, tractor=tid, previous=old_owner.get(jid))
+        self.log.write(self.t, "plan", trigger=trigger.kind if trigger else None,
+                       queues={tid: [f"{st.kind}:{st.target}" for st in q] for tid, q in new_queues.items()},
+                       explanation=plan.explanation, warnings=plan.warnings)
+
+    # ------------------------------------------------------------------ movement / work
+
+    def _stop_node(self, stop: Stop) -> str:
+        if stop.kind == "refuel":
+            return self.state.depots[stop.target].node
+        return self.state.job_node(stop.target)
+
+    def _burn(self, tr) -> bool:
+        """Burn one tick of fuel. Returns False (and stalls the tractor) if the tank is empty."""
+        if tr.fuel + EPS < tr.burn_rate:
+            tr.fuel = 0.0
+            v = self.metrics.add_violation(self.t, "out_of_fuel", f"{tr.id} ran out of fuel at {tr.location}")
+            self.log.write(self.t, "violation", violation=v["kind"], detail=v["detail"])
+            self._take_out_of_service(tr.id, "out_of_fuel")
+            return False
+        tr.fuel -= tr.burn_rate
+        self.metrics.add_fuel(tr.id, tr.burn_rate)
+        return True
+
+    def _step_tractor(self, tid: str) -> bool:
+        """Advance one tractor by one tick. Returns True if a replan is needed."""
+        s = self.state
+        tr = s.tractors[tid]
+        if tr.status == BROKEN:
+            return False
+        q = self.queues[tid]
+
+        # Drop stops that no longer make sense (e.g. job finished by someone else).
+        while q and q[0].kind == "job" and s.jobs[q[0].target].status == DONE:
+            q.pop(0)
+
+        leg = self.legs[tid]
+        if not q:
+            if leg:  # finish the edge it is on, then wait
+                if not self._burn(tr):
+                    return True
+                tr.status = TRAVELLING
+                self._move(tr, leg.b)
+            else:
+                tr.status = IDLE
+            return False
+
+        stop = q[0]
+        target = self._stop_node(stop)
+
+        if leg or tr.location != target:
+            if not leg and nav.route(s, tr.location, target) is None:
+                key = (tid, target)
+                if key not in self._unreachable_logged:
+                    self._unreachable_logged.add(key)
+                    self.log.write(self.t, "unreachable", tractor=tid, target=target, stop=stop.target)
+                tr.status = IDLE
+                return False
+            if not self._burn(tr):
+                return True
+            tr.status = TRAVELLING
+            self._move(tr, target)
+            return False
+
+        # At the stop.
+        if stop.kind == "refuel":
+            tr.status = REFUELLING
+            tr.current_job = None
+            tr.fuel = min(tr.fuel_capacity, tr.fuel + REFUEL_RATE)
+            if tr.fuel >= tr.fuel_capacity - EPS:
+                q.pop(0)
+                self.log.write(self.t, "refuelled", tractor=tid, fuel=tr.fuel)
+                return not q
+            return False
+
+        job = s.jobs[stop.target]
+        if not self._burn(tr):
+            return True
+        if job.status != IN_PROGRESS:
+            self.log.write(self.t, "job_started", job=job.id, tractor=tid, remaining=round(job.remaining, 3))
+        tr.status, tr.current_job = WORKING, job.id
+        job.status, job.owner = IN_PROGRESS, tid
+        if tid not in job.completed_by:
+            job.completed_by.append(tid)
+        area = s.fields[job.field].area
+        job.remaining = max(0.0, job.remaining - tr.work_rate / area)
+        if job.remaining <= EPS:
+            job.remaining = 0.0
+            job.status = DONE
+            job.completed_at = self.t + 1  # finished at the end of this tick
+            tr.current_job = None
+            q.pop(0)
+            self.log.write(job.completed_at, "job_completed", job=job.id, tractor=tid,
+                           on_time=job.completed_at <= job.deadline, deadline=job.deadline,
+                           worked_by=list(job.completed_by))
+            return not q
+        return False
+
+    def _move(self, tr, target: str) -> None:
+        """Move tr up to tr.speed km towards target, re-routing at each node."""
+        s = self.state
+        budget = tr.speed
+        while budget > EPS:
+            leg = self.legs[tr.id]
+            if leg is None:
+                if tr.location == target:
+                    break
+                r = nav.route(s, tr.location, target)
+                if r is None or len(r[0]) < 2:
+                    break
+                nxt = r[0][1]
+                eid = nav.edge_between(s, tr.location, nxt)
+                leg = Leg(tr.location, nxt, eid, s.edges[eid].length)
+                self.legs[tr.id] = leg
+            step = min(budget, leg.length - leg.done_km)
+            leg.done_km += step
+            budget -= step
+            self.metrics.add_travel(tr.id, step)
+            if leg.done_km >= leg.length - EPS:
+                tr.location = leg.b
+                self.legs[tr.id] = None
+                if tr.location == target:
+                    break
+
+    # ------------------------------------------------------------------ views
+
+    def position(self, tid: str) -> tuple[float, float]:
+        s = self.state
+        leg = self.legs[tid]
+        if leg is None:
+            n = s.nodes[s.tractors[tid].location]
+            return n.x, n.y
+        a, b = s.nodes[leg.a], s.nodes[leg.b]
+        f = leg.done_km / leg.length if leg.length else 1.0
+        return a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f
+
+    def snapshot(self) -> dict:
+        """JSON-able view of everything the dashboard needs."""
+        s = self.state
+        tractors = []
+        for tr in s.tractors.values():
+            x, y = self.position(tr.id)
+            tractors.append({
+                "id": tr.id, "implement": tr.implement, "status": tr.status, "x": x, "y": y,
+                "location": tr.location, "fuel": round(tr.fuel, 1), "fuel_capacity": tr.fuel_capacity,
+                "current_job": tr.current_job, "stall_reason": self.stall_reason.get(tr.id),
+                "queue": [f"{st.kind}:{st.target}" for st in self.queues[tr.id]],
+            })
+        return {
+            "t": s.t, "horizon": self.horizon, "finished": self.finished(),
+            "dispatcher": getattr(self.dispatcher, "name", ""),
+            "nodes": [vars(n) for n in s.nodes.values()],
+            "edges": [vars(e) | {"blocked": e.id in s.blocked_edges} for e in s.edges.values()],
+            "depots": [vars(d) for d in s.depots.values()],
+            "fields": [vars(f) | {"x": s.nodes[f.node].x, "y": s.nodes[f.node].y} for f in s.fields.values()],
+            "tractors": tractors,
+            "jobs": [vars(j) | {"remaining": round(j.remaining, 3)} for j in s.jobs.values()],
+            "explanation": self.last_explanation,
+            "warnings": self.last_warnings,
+            "log": self.log.recent(50),
+            "metrics": self.metrics.summary(s),
+        }

@@ -2,9 +2,11 @@ import type { LatLngBoundsExpression, LatLngTuple } from "leaflet";
 import type { Node } from "./types";
 
 // Where grid (0, 0) sits on Earth. The scenario is in km, so 1 grid unit = 1 km.
-// Farmland in the Yuma Valley, Arizona, next to the Colorado River. Change freely.
-export const LAT0 = 32.62;
-export const LON0 = -114.74;
+// Farmland in the Imperial Valley, California, between El Centro and Holtville: no
+// town inside the view, and the Alamo River runs under the "bridge" and
+// "south crossing" roads. Check the satellite view if you move it.
+export const LAT0 = 32.83;
+export const LON0 = -115.497;
 
 const KM_PER_DEG_LAT = 110.574;
 const KM_PER_DEG_LON = 111.32 * Math.cos((LAT0 * Math.PI) / 180);

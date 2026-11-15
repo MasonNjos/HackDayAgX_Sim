@@ -148,3 +148,41 @@ def test_stranded_without_fuel_counts_as_idle_not_out_of_service():
     assert (t1.idle_ticks, t1.stranded_ticks, t1.broken_ticks) == (1, 1, 0)
     assert (t2.idle_ticks, t2.stranded_ticks, t2.broken_ticks) == (0, 0, 1)
     assert m.summary(state)["stranded_ticks"] == 1
+
+
+def _depot_nodes(sim):
+    return {d.node for d in sim.state.depots.values()}
+
+
+def test_day_end_all_tractors_park_at_depot():
+    from orchestrator.fleet_agent import FleetAgent
+    from orchestrator.maintenance_agent import MaintenanceAgent
+    for dispatcher in (FleetAgent(), FCFSDispatcher()):
+        sim = make(dispatcher)
+        MaintenanceAgent().attach(sim)  # repairs the scripted breakdown, as in run_demo
+        sim.run()
+        assert sim.t < sim.horizon, "run should end once everyone is parked, not at the horizon"
+        assert not sim.state.open_jobs()
+        for tid, tr in sim.state.tractors.items():
+            if tr.status != BROKEN:
+                assert tr.location in _depot_nodes(sim) and sim.legs[tid] is None, tid
+        kinds = [r["kind"] for r in sim.log.records]
+        assert "returning_home" in kinds and "parked" in kinds
+
+
+def test_day_end_idle_tractor_waits_while_jobs_are_open():
+    class Nothing:
+        name = "nothing"
+        def plan(self, state, trigger):
+            return Plan(queues={t: [] for t in state.tractors})
+    state, _, meta = load_scenario(FARM)
+    tr = state.tractors["T1"]
+    tr.location = "east"  # away from the depot, with jobs still open
+    sim = Sim(state, [], Nothing(), horizon=meta["horizon"])
+    for _ in range(3):
+        sim.step()
+    assert tr.location == "east" and sim.legs["T1"] is None and "T1" not in sim.going_home
+    for j in state.jobs.values():
+        j.status, j.remaining = DONE, 0.0
+    sim.step()
+    assert "T1" in sim.going_home  # day over: heads home

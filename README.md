@@ -46,6 +46,7 @@ Rebuild (`--build`) only after changing `requirements.txt` or `dashboard/package
 | `LLM_MODEL` | `claude-opus-5-5` | Claude model. |
 | `LLM_EFFORT` | `medium` | `low` gives faster replans. |
 | `LLM_TIMEOUT` / `LLM_BUDGET` | `45` / `90` s | Per request / per replan; past the budget the greedy plan is used. |
+| `LLM_MAX_TURNS_START` / `LLM_BUDGET_START` | `14` / `180` s | Turns and time for the start-of-day route plan. |
 | `REPAIR_TRACTOR_MIN` | `5` | Ticks until a broken tractor is repaired. |
 | `REPAIR_ROAD_MIN` | `10` | Ticks until a blocked road or bridge reopens. |
 
@@ -61,7 +62,8 @@ Rebuild (`--build`) only after changing `requirements.txt` or `dashboard/package
    (1 tick =        |
     1 minute)       v
              Fleet coordinator  <-- brief: tractors, jobs, roads, repairs on the way, greedy plan
-              (Claude)            tools: evaluate_queue (ETAs, fuel), submit_plan
+              (Claude)            (start of day: greedy score only; Claude routes from scratch)
+                                  tools: evaluate_plan, evaluate_queue (ETAs, fuel), submit_plan
                     |
                     v
              Safety agent: validate() -- rejected? errors go back to Claude to fix
@@ -72,7 +74,7 @@ Rebuild (`--build`) only after changing `requirements.txt` or `dashboard/package
 
 | Agent | File | Role |
 |---|---|---|
-| **Fleet coordinator (Claude)** | `orchestrator/llm_agent.py` | Gets a brief of the world and the greedy plan as a starting point, tests ideas with `evaluate_queue` (simulated ETAs, fuel, lateness), then calls `submit_plan` with queues, an explanation and a reason per job. |
+| **Fleet coordinator (Claude)** | `orchestrator/llm_agent.py` | **Start of day:** gets the whole job list and builds every tractor's route from scratch (only the greedy plan's score is shown, not its routes), compares candidate plans with `evaluate_plan` (km, lateness, rule violations), and must match greedy on deadlines without driving further or finishing later. It is also given a what-if run of the FCFS baseline (km, idle) as the target to beat. **Replans:** starts from the greedy plan and keeps it quick. Commits with `submit_plan` (queues, explanation, a reason per job). |
 | **Fleet agent (greedy)** | `orchestrator/fleet_agent.py` | Deterministic planner: eligibility, then feasibility and ETA, then the most urgent job (priority, then least slack) to the tractor with the lowest cost (travel + waiting + lateness). Adds refuel stops. Claude's starting point and fallback. |
 | **Safety agent** | `orchestrator/safety_agent.py` | One shared set of checks used by both planners, `validate()` and the tests. |
 | **Maintenance agent** | `orchestrator/maintenance_agent.py` | Sends a repair crew on every breakdown and blocked road, and a fuel crew to any tractor that runs dry. Repairs arrive as normal events, so the fleet replans on them. |

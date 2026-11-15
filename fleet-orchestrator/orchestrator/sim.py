@@ -119,7 +119,7 @@ class Sim:
             if hasattr(obs, "on_tick"):
                 obs.on_tick(self)
 
-        self.metrics.record_tick(self.state)
+        self.metrics.record_tick(self.state, {t for t, r in self.stall_reason.items() if r == "out_of_fuel"})
         self.state.t += 1
         self.version += 1
         if need_replan and not self.finished():

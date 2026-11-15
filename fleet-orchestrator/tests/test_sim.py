@@ -133,3 +133,18 @@ def test_sim_rejects_bad_plans():
     assert {"incompatible", "double_owner"} <= kinds
     assert sim.state.jobs["J2"].owner == "T1"
     assert sim.state.jobs["J3"].owner is None
+
+
+def test_stranded_without_fuel_counts_as_idle_not_out_of_service():
+    from pathlib import Path
+    from orchestrator.metrics import Metrics
+    from orchestrator.models import BROKEN, load_scenario
+    state = load_scenario(Path(__file__).resolve().parent.parent / "scenarios" / "farm.json")[0]
+    state.tractors["T1"].status = BROKEN   # ran dry
+    state.tractors["T2"].status = BROKEN   # broke down
+    m = Metrics()
+    m.record_tick(state, {"T1"})
+    t1, t2 = m.per_tractor["T1"], m.per_tractor["T2"]
+    assert (t1.idle_ticks, t1.stranded_ticks, t1.broken_ticks) == (1, 1, 0)
+    assert (t2.idle_ticks, t2.stranded_ticks, t2.broken_ticks) == (0, 0, 1)
+    assert m.summary(state)["stranded_ticks"] == 1

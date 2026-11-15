@@ -22,10 +22,10 @@ Nav Agent goes to A because the sim needs routes to move tractors. B only calls 
 
 **Change in Block 2: the Maintenance agent repairs things by itself.** `MaintenanceAgent` (B) watches every event: a broken tractor is repaired after `REPAIR_TRACTOR_MIN` (5 ticks), a blocked road or bridge reopens after `REPAIR_ROAD_MIN` (10 ticks), and a tractor that runs out of fuel gets a crew that also fills its tank. It works whether or not the tractor has work, and for breakdowns and blocks from the script or the dashboard. Repairs arrive as normal `repair` / `route_unblocked` events, so the coordinator replans and explains them; Claude's brief lists the repairs on the way. Repairs are part of the world, so every run gets them, the baseline included. Effects to know about:
 - `sim.py` (A's) gained `process_event(ev)` (apply, observers, replan) and observer hooks; every event path, including the server's immediate apply, must use `process_event`.
-- The comparison changed: with repairs the baseline also finishes all 11 jobs. The coordinator still wins on deadlines met (11 vs 7), violations (0 vs 1), travel and idle time, and finishes earlier. Greedy `WAIT_WEIGHT` went 0.2 -> 1.0 so idle tractors take work.
+- The comparison changed: with repairs the baseline also finishes all 11 jobs. The coordinator still wins on deadlines met (11 vs 7), violations (0 vs 1), idle time (376 vs 423) and travel time (294 vs 295 min), and finishes earlier (t=410 vs 426). Travel distance and fuel are about a tie, slightly better for the baseline (67.0 vs 66.4 km): do not claim a distance win. Greedy `WAIT_WEIGHT` went 0.2 -> 1.0 so idle tractors take work.
 - Verified at 3:05: a full scripted day with Claude in the dashboard runs end to end, repairs included.
 
-Run everything through Docker so nobody has to install packages (from `fleet-orchestrator/`): `docker compose up --build` starts the server and dashboard on http://localhost:8000 and reloads when code changes; `docker compose run --rm app pytest` runs the tests; `docker compose run --rm app python run_demo.py` runs the demo. Rebuild only after changing `requirements.txt`. The README should give these commands too.
+Run everything through Docker so nobody has to install packages (from `fleet-orchestrator/`): `docker compose up --build` starts the dashboard on http://localhost:5173 (the API is on http://localhost:8000/api/state) and reloads when code changes; `docker compose run --rm app pytest` runs the tests; `docker compose run --rm app python run_demo.py` runs the demo. Rebuild only after changing `requirements.txt`. The README should give these commands too.
 
 Git: each person works on their own branch (`a/...`, `b/...`) and merges to `main` at every sync point. Changes to a shared file go in a small commit of their own, announced to the other person first.
 
@@ -96,7 +96,7 @@ This half hour is what lets you work in parallel for the next four hours. Write 
 
 **B**
 1. ~~Blocked route~~ and ~~fuel planning (refuel stops)~~: done in Block 1.
-2. Record/replay cache for Claude plans (`out/llm_plans.json`), so the demo and hand-in runs are reproducible and work offline.
+2. ~~Record/replay cache for Claude plans~~: skipped (not needed: the greedy fallback covers network failures, and the hand-in files are committed once).
 3. Priority change: reorder queued jobs only (check that Claude respects it; add a test).
 4. 2-opt/insertion improvement on the greedy queues (this also improves the plan Claude starts from).
 
@@ -108,7 +108,7 @@ This half hour is what lets you work in parallel for the next four hours. Write 
 
 ## 4:15 code freeze. 4:15–4:45: hand-in
 
-- **A:** run `python run_demo.py` on clean `main` (with `COORDINATOR=llm` and the replay cache) and commit `out/event_log.jsonl`, `out/comparison.md` and `out/llm_plans.json`.
+- **A:** on clean `main`, with the key in `.env`, run `docker compose run --rm -e COORDINATOR=llm app python run_demo.py` and commit `out/comparison.md`, `out/event_log.jsonl`, `out/event_log_greedy.jsonl` and `out/event_log_baseline.jsonl`. B pastes the table into the README.
 - **B:** write the README: how to run (including `ANTHROPIC_API_KEY` and `COORDINATOR`), "own simulation (not AgOpenWeb)", design summary (Claude proposes, Safety Agent approves, greedy fallback, Maintenance agent repairs), scenario description, and the comparison table.
 - **Both:** rehearse the 2–3 minute demo twice. Order: start the run and let the agents handle the scripted breakdown on their own, show Claude's explanation, ask "why?", then one operator override click, then the comparison table. Decide who presents and who clicks.
 
@@ -119,8 +119,8 @@ This half hour is what lets you work in parallel for the next four hours. Write 
 Cut from the bottom of this list first. Never cut the must-haves.
 
 1. 2-opt improvement
-2. Replay cache (then demo live with a network check before presenting)
-3. Priority change
+2. ~~Replay cache~~: already skipped; check the venue network before presenting a live Claude run
+3. ~~Priority change~~: done (the safety check stops any preemption; Claude reorders queued jobs)
 4. Claude coordinator: switch back to `COORDINATOR=greedy`, which already wins with 0 violations. Keep `explain.py` templates so explanations still appear.
 
 If the 3:30 checkpoint fails, both of you drop stretch work, run with `COORDINATOR=greedy`, and fix the dashboard and explanations together.

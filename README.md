@@ -32,8 +32,8 @@ Other commands (also from `fleet-orchestrator/`):
 | What | Command |
 |---|---|
 | Run the tests (offline, no key needed) | `docker compose run --rm app pytest` |
-| Baseline vs coordinator comparison, writes `out/` | `docker compose run --rm app python run_demo.py` |
-| One URL, built dashboard (for judges) | `docker build -t fleet . && docker run --rm --env-file .env -p 8000:8000 fleet`, then http://localhost:8000 |
+| Baseline vs coordinator comparison, writes `out/` | `docker compose run --rm app python run_demo.py` (add `-e COORDINATOR=llm` after `run` to include Claude) |
+| One URL, built dashboard (for judges) | `docker build -t fleet . && docker run --rm -p 8000:8000 fleet`, then http://localhost:8000. To use Claude, add `--env-file .env` (only if `.env` exists). |
 
 Rebuild (`--build`) only after changing `requirements.txt` or `dashboard/package.json`.
 
@@ -97,7 +97,7 @@ Tests and the safety checks are the same either way.
 
 ## The scenario: River farm (`scenarios/farm.json`)
 
-Three tractors, eight fields, ten jobs, one depot, over one 480-minute day. A river splits the
+Three tractors, eight fields, ten jobs (an eleventh arrives mid-day), one depot, and a day of at most 480 minutes (the horizon; a run ends earlier once every job is done). A river splits the
 farm: the **bridge** is the short crossing and the south road is a long detour.
 
 - **T1** (sprayer) starts low on fuel; **T2** (sprayer); **T3** is the only mower.
@@ -116,19 +116,27 @@ Repairs are part of the world, so the baseline gets them too and the comparison 
 
 ## Results
 
-<!-- TODO at hand-in: paste the table from out/comparison.md after the final run
-     (COORDINATOR=llm docker compose run --rm app python run_demo.py). -->
+<!-- TODO at hand-in: run the command below, commit out/, and paste the table from out/comparison.md here. -->
 
 _Final table to be added from `out/comparison.md`._
 
-The committed `out/` files come from a run with Claude. Without an API key, `run_demo.py` runs the
-greedy coordinator, so numbers can differ slightly; it still finishes with 0 violations.
+The hand-in `out/` files are produced by one run with Claude, with the key in `.env`:
+
+```bash
+docker compose run --rm -e COORDINATOR=llm app python run_demo.py
+```
+
+(`-e` matters: a variable set in front of `docker compose` on your own shell is not passed into the
+container; only `.env` and `-e` are.) That run compares the FCFS baseline, the greedy coordinator
+and the Claude coordinator. Without an API key, `run_demo.py` compares the baseline with the greedy
+coordinator only; it still finishes with 0 violations.
 
 ## Hand-in files
 
 - Code: this repository
 - Scenario: `fleet-orchestrator/scenarios/farm.json`
-- Event log: `fleet-orchestrator/out/event_log.jsonl` (baseline: `out/event_log_baseline.jsonl`)
+- Event logs: `fleet-orchestrator/out/event_log.jsonl` (the hand-in coordinator: Claude),
+  `out/event_log_greedy.jsonl` (greedy coordinator) and `out/event_log_baseline.jsonl` (FCFS baseline)
 - Comparison: `fleet-orchestrator/out/comparison.md`
 
 ## Repository layout

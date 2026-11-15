@@ -20,9 +20,17 @@ docker compose up --build     # dashboard: http://localhost:5173   API: http://l
 ```
 
 In the dashboard, press **▶ Start**. With `COORDINATOR=llm` in `.env` the run starts on Claude. To
-start over with another coordinator, pick it in the **reset as** dropdown: **Claude**, **Greedy**
-(the deterministic planner) or **FCFS baseline** (first come, first served). A badge in the
-explanation panel shows which coordinator made the plan the tractors are following.
+start over with another coordinator, pick it in the **coordinator** dropdown and press **Reset**:
+**Claude**, **Greedy** (the deterministic planner) or **FCFS baseline** (first come, first served).
+A badge in the explanation panel shows which coordinator made the plan the tractors are following.
+
+**Map or Satellite.** The farm map has two views; the toggle above it remembers your choice.
+**Map** (the default) is a plain diagram and works offline. **Satellite** draws the same farm on
+real satellite imagery of the Imperial Valley, California (Esri World Imagery, via Leaflet): every
+farm road sits on a real farm road, so tractors drive along real roads, and the Alamo River runs
+under the bridge and the south road. Both views work the same way: click a road to block or reopen
+it, click a field for "why?". Satellite needs an internet connection for the imagery, and it is
+drawn at about 1.6× the sim's distances (the real roads are farther apart than the scenario's).
 
 **No API key?** Everything still works: the coordinator falls back to the greedy planner, with the
 same safety checks, and says so in the dashboard's warnings.
@@ -32,7 +40,6 @@ Other commands (also from `fleet-orchestrator/`):
 | What | Command |
 |---|---|
 | Run the tests (offline, no key needed) | `docker compose run --rm app pytest` |
-| Baseline vs coordinator comparison, writes `out/` | `docker compose run --rm app python run_demo.py` (add `-e COORDINATOR=llm` after `run` to include Claude) |
 | One URL, built dashboard (for judges) | `docker build -t fleet . && docker run --rm -p 8000:8000 fleet`, then http://localhost:8000. To use Claude, add `--env-file .env` (only if `.env` exists). |
 
 Rebuild (`--build`) only after changing `requirements.txt` or `dashboard/package.json`.
@@ -42,10 +49,11 @@ Rebuild (`--build`) only after changing `requirements.txt` or `dashboard/package
 | Variable | Default | Meaning |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | (empty) | Claude credentials. Empty means the greedy planner runs. |
-| `COORDINATOR` | `greedy` | `llm` to let Claude plan (dashboard and `run_demo.py`). |
+| `COORDINATOR` | `greedy` | `llm` to let Claude plan. |
 | `LLM_MODEL` | `claude-opus-5-5` | Claude model. |
 | `LLM_EFFORT` | `medium` | `low` gives faster replans. |
 | `LLM_TIMEOUT` / `LLM_BUDGET` | `45` / `90` s | Per request / per replan; past the budget the greedy plan is used. |
+| `LLM_MAX_TURNS` | `8` | Tool-use turns per replan. |
 | `LLM_MAX_TURNS_START` / `LLM_BUDGET_START` | `14` / `180` s | Turns and time for the start-of-day route plan. |
 | `REPAIR_TRACTOR_MIN` | `5` | Ticks until a broken tractor is repaired. |
 | `REPAIR_ROAD_MIN` | `10` | Ticks until a blocked road or bridge reopens. |
@@ -116,40 +124,14 @@ Scripted events (the Maintenance agent repairs each one):
 
 Repairs are part of the world, so the baseline gets them too and the comparison stays fair.
 
-## Results
-
-<!-- TODO at hand-in: run the command below, commit out/, and paste the table from out/comparison.md here. -->
-
-_Final table to be added from `out/comparison.md`._
-
-The hand-in `out/` files are produced by one run with Claude, with the key in `.env`:
-
-```bash
-docker compose run --rm -e COORDINATOR=llm app python run_demo.py
-```
-
-(`-e` matters: a variable set in front of `docker compose` on your own shell is not passed into the
-container; only `.env` and `-e` are.) That run compares the FCFS baseline, the greedy coordinator
-and the Claude coordinator. Without an API key, `run_demo.py` compares the baseline with the greedy
-coordinator only; it still finishes with 0 violations.
-
-## Hand-in files
-
-- Code: this repository
-- Scenario: `fleet-orchestrator/scenarios/farm.json`
-- Event logs: `fleet-orchestrator/out/event_log.jsonl` (the hand-in coordinator: Claude),
-  `out/event_log_greedy.jsonl` (greedy coordinator) and `out/event_log_baseline.jsonl` (FCFS baseline)
-- Comparison: `fleet-orchestrator/out/comparison.md`
-
 ## Repository layout
 
 ```
 fleet-orchestrator/
   orchestrator/      sim, agents (llm, fleet, safety, maintenance, nav), explain, metrics, event log
   scenarios/         farm.json
-  dashboard/         React dashboard (map, tractors, jobs, explanations, event log, operator buttons)
+  dashboard/         React dashboard (map and satellite views, tractors, jobs, explanations, event log, operator buttons)
   server.py          FastAPI: /api/state, /api/event, /api/jobs, /api/why/{job}, /api/speed
-  run_demo.py        baseline vs coordinator -> out/comparison.md, out/event_log.jsonl
   tests/             invariants, scenarios, Claude coordinator (offline fake client), maintenance, server
-plan/                PLAN.md, TEAM_SPLIT.md, LLM_AGENT.md
+plan/                PLAN.md, TEAM_SPLIT.md, LLM_AGENT.md, LEAFLET.md
 ```

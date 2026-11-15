@@ -114,6 +114,7 @@ main { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); ga
 .tractor circle { stroke: #fff; stroke-width: 2; }
 .tractor text { font-size: 10px; fill: #fff; text-anchor: middle; font-weight: 700; }
 .tractor.broken circle { fill: #6b7280 !important; }
+.tractor.complete circle { fill: #16a34a !important; }
 .tractor .broken-x { fill: var(--bad); font-size: 13px; }
 .tractor .fuel-bg { fill: var(--line); }
 .tractor .fuel { fill: #16a34a; }
@@ -147,6 +148,7 @@ tr.selected td { background: color-mix(in srgb, var(--accent) 12%, transparent);
 .pill.in_progress, .pill.working { background: var(--in_progress); }
 .pill.done, .pill.refuelling { background: var(--done); }
 .pill.broken, .pill.unassignable { background: var(--unassignable); }
+.pill.complete { background: #16a34a; color: #fff; }
 .prio { font-weight: 700; font-size: 12px; }
 .prio.p3 { color: var(--bad); }
 .prio.p2 { color: #b45309; }

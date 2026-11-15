@@ -22,7 +22,7 @@ so a newly blocked edge takes effect at the next node it reaches.
 Day end: once every job is done and no more jobs are due to arrive, each tractor that has finished
 its queue drives back to the nearest depot (its home fuel station) and parks there. Until then an
 idle tractor waits where it is, since a new job or a breakdown may still need it. The run ends once
-every working tractor is parked at a depot (or at the horizon).
+every working tractor is parked at a depot (or at the horizon); those tractors are then COMPLETE.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from . import nav_agent as nav
 from .eventlog import EventLog
 from .metrics import Metrics
-from .models import (ASSIGNED, BROKEN, DONE, IDLE, IN_PROGRESS, PENDING, REFUELLING, TRAVELLING,
+from .models import (ASSIGNED, BROKEN, COMPLETE, DONE, IDLE, IN_PROGRESS, PENDING, REFUELLING, TRAVELLING,
                      REFUEL_TICKS, WORKING, Dispatcher, Event, Plan, Stop, WorldState, job_from_dict)
 
 EPS = 1e-9
@@ -94,6 +94,16 @@ class Sim:
         """All work is done and no more jobs are scheduled to arrive."""
         return not self.state.open_jobs() and not any(e.kind == "new_job" for e in self.pending_events)
 
+    def _mark_day_complete(self) -> None:
+        """Once the day is over and everyone is parked, mark every working tractor COMPLETE."""
+        if not (self.day_over() and self.all_parked()):
+            return
+        done = [tid for tid, tr in self.state.tractors.items() if tr.status != BROKEN]
+        if any(self.state.tractors[tid].status != COMPLETE for tid in done):
+            for tid in done:
+                self.state.tractors[tid].status = COMPLETE
+            self.log.write(self.t + 1, "day_complete", tractors=done)
+
     def all_parked(self) -> bool:
         """Every tractor that can move is stopped at a depot."""
         s = self.state
@@ -137,6 +147,7 @@ class Sim:
                 obs.on_tick(self)
 
         self.metrics.record_tick(self.state, {t for t, r in self.stall_reason.items() if r == "out_of_fuel"})
+        self._mark_day_complete()
         self.state.t += 1
         self.version += 1
         if need_replan and not self.finished():

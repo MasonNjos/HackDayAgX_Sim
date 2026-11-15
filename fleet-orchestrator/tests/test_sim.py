@@ -166,8 +166,9 @@ def test_day_end_all_tractors_park_at_depot():
         for tid, tr in sim.state.tractors.items():
             if tr.status != BROKEN:
                 assert tr.location in _depot_nodes(sim) and sim.legs[tid] is None, tid
+                assert tr.status == "complete", tid
         kinds = [r["kind"] for r in sim.log.records]
-        assert "returning_home" in kinds and "parked" in kinds
+        assert "returning_home" in kinds and "parked" in kinds and kinds.count("day_complete") == 1
 
 
 def test_day_end_idle_tractor_waits_while_jobs_are_open():

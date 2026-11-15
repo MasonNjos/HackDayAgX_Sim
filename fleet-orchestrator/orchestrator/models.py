@@ -54,32 +54,31 @@ class Field:
     area: float     # hectares
 
 
+IMPLEMENT_JOBS: dict[str, list[str]] = {"sprayer": ["spray"], "mower": ["mow"]}
+FUEL_RESERVE = 0.10  # fraction of capacity no plan may go below
+
+
 @dataclass
 class Tractor:
     id: str
-    implement: str               # "sprayer" | "mower" | ...
-    capabilities: list[str]      # job types it can do, e.g. ["spray"]
+    implement: str               # "sprayer" | "mower"; IMPLEMENT_JOBS says what it can do
     speed: float                 # km per tick
-    work_rate: float             # hectares per tick while working
-    fuel: float                  # litres now
+    work_rate: float             # hectares per tick
+    fuel: float                  # litres
     fuel_capacity: float
-    burn_per_km: float
-    burn_per_work_tick: float
-    reserve: float = 0.10        # fraction of capacity never planned below
+    burn_rate: float             # litres per tick while travelling or working
     location: str = ""           # node id: current node, or last node passed while travelling
     status: str = IDLE
-    route: list[str] = field(default_factory=list)  # remaining nodes to visit (sim-owned)
-    edge_progress: float = 0.0   # km travelled along the current edge (sim-owned)
     current_job: str | None = None
-    # running totals for metrics (sim-owned)
-    travel_km: float = 0.0
-    travel_ticks: int = 0
-    work_ticks: int = 0
-    idle_ticks: int = 0
+    # Route progress, x/y position and metric totals live in sim.py / metrics.py, not here.
+
+    @property
+    def capabilities(self) -> list[str]:
+        return IMPLEMENT_JOBS.get(self.implement, [])
 
     @property
     def reserve_fuel(self) -> float:
-        return self.reserve * self.fuel_capacity
+        return FUEL_RESERVE * self.fuel_capacity
 
 
 @dataclass

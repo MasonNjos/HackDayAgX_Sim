@@ -30,7 +30,7 @@ fleet-orchestrator/
 ```
 
 ## Data model (key constraints)
-- Tractor: id, position (field/node), implement type (sprayer/mower/seeder), capabilities (job types), fuel/battery, burn rate per distance and per work-hour, speed, status (idle/travelling/working/broken).
+- Tractor: id, location (node), implement (sprayer/mower; capabilities derived via `IMPLEMENT_JOBS`), fuel and capacity, one burn rate per active tick, speed, work rate, status (idle/travelling/working/refuelling/broken), current job. Fuel reserve is a global constant. Route progress and x/y live in the sim; travel/idle totals live in metrics.
 - Field: id, grid x/y, size (work duration per implement type), road node it attaches to.
 - Road network: `nodes` and `edges` (length, optional label such as "bridge") in the scenario. Travel uses shortest paths over this graph, so a blocked edge has a real effect.
 - Depots: refuel/charge locations; tractors start at one. Needed for the "enough fuel to get back" check.

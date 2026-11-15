@@ -47,12 +47,9 @@
     {"id": "F8", "name": "Top Corner",    "node": "far_ne", "area": 20}
   ],
   "tractors": [
-    {"id": "T1", "implement": "sprayer", "capabilities": ["spray"], "speed": 0.25, "work_rate": 0.5,
-     "fuel": 60,  "fuel_capacity": 200, "burn_per_km": 0.5, "burn_per_work_tick": 0.4, "reserve": 0.1},
-    {"id": "T2", "implement": "sprayer", "capabilities": ["spray"], "speed": 0.25, "work_rate": 0.5,
-     "fuel": 180, "fuel_capacity": 200, "burn_per_km": 0.5, "burn_per_work_tick": 0.4, "reserve": 0.1},
-    {"id": "T3", "implement": "mower",   "capabilities": ["mow"],   "speed": 0.2,  "work_rate": 0.25,
-     "fuel": 190, "fuel_capacity": 200, "burn_per_km": 0.6, "burn_per_work_tick": 0.3, "reserve": 0.1}
+    {"id": "T1", "implement": "sprayer", "speed": 0.25, "work_rate": 0.5,  "fuel": 60,  "fuel_capacity": 200, "burn_rate": 0.4},
+    {"id": "T2", "implement": "sprayer", "speed": 0.25, "work_rate": 0.5,  "fuel": 180, "fuel_capacity": 200, "burn_rate": 0.4},
+    {"id": "T3", "implement": "mower",   "speed": 0.2,  "work_rate": 0.25, "fuel": 190, "fuel_capacity": 200, "burn_rate": 0.35}
   ],
   "jobs": [
     {"id": "J1",  "type": "spray", "field": "F7", "priority": 1, "deadline": 400, "submitted_at": 0},

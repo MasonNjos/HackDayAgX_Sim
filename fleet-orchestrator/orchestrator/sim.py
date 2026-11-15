@@ -94,10 +94,7 @@ class Sim:
 
         while self.pending_events and self.pending_events[0].t <= self.t:
             ev = self.pending_events.pop(0)
-            self.apply_event(ev)
-            for obs in self.observers:  # e.g. the Maintenance agent scheduling a repair
-                obs.on_event(self, ev)
-            self.replan(ev)
+            self.process_event(ev)
 
         need_replan = False
         for tid in sorted(self.state.tractors):
@@ -113,6 +110,16 @@ class Sim:
             self.replan(None)
 
     # ------------------------------------------------------------------ events
+
+    def process_event(self, ev: Event) -> None:
+        """Apply an event, tell the observers (e.g. the Maintenance agent), then replan.
+
+        Every event goes through here, scripted or from the dashboard, so no observer misses one.
+        """
+        self.apply_event(ev)
+        for obs in self.observers:
+            obs.on_event(self, ev)
+        self.replan(ev)
 
     def apply_event(self, ev: Event) -> None:
         s, p = self.state, ev.params

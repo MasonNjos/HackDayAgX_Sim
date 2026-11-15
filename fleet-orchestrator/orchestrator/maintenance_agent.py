@@ -63,7 +63,14 @@ class MaintenanceAgent:
             self.scheduled.pop(("edge", p.get("edge")), None)
 
     def on_tick(self, sim) -> None:
-        """Catch tractors that broke without a breakdown event (they ran out of fuel)."""
+        """Safety net: anything broken with no crew on the way gets one.
+
+        Catches tractors that stalled out of fuel (no breakdown event) and any road
+        blocked by a path that skipped on_event.
+        """
+        for edge in sorted(sim.state.blocked_edges):
+            if ("edge", edge) not in self.scheduled:
+                self._schedule(sim, "edge", edge, self.road_min, "route_unblocked", {"edge": edge})
         for tr in sim.state.tractors.values():
             if tr.status == BROKEN and ("tractor", tr.id) not in self.scheduled:
                 reason = sim.stall_reason.get(tr.id, "breakdown")

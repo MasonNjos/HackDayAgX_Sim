@@ -79,8 +79,8 @@ This half hour is what lets you work in parallel for the next four hours. Write 
 **A**
 - `server.py` (FastAPI + uvicorn): start the sim in a background thread from the app's `lifespan`, with a `threading.Lock` around state. Write endpoints as plain `def`, not `async def`, so FastAPI runs them in its threadpool and a blocking lock can't stall the event loop. Serve `dashboard/` with `StaticFiles`. Routes: `GET /state`, `POST /event`, `POST /jobs`, `GET /why/<job>`, `POST /speed`.
 - `dashboard/index.html`: grid map with fields, tractors, routes and fuel bars; job table; explanation panel; event log; buttons for Break down, Add job/Submit job list, and speed. The sim must run to the end with no clicks; buttons are an override.
-- ~~Choose the coordinator with `COORDINATOR=greedy|llm`~~: done by B (`server.py` starts on Claude when `COORDINATOR=llm`; the dashboard dropdown has `claude`; `run_demo.py` uses it). Still open: note that a Claude replan takes a few seconds, so the sim thread pauses while it runs; release the state lock during `plan()` if the dashboard freezes.
-- ~~Add `anthropic` and pass the key through~~: done by B (`compose.yaml` loads `.env`; copy `example.env` to `.env`). Still open: add `httpx` to `requirements.txt` so `tests/test_server.py` runs in Docker.
+- ~~Choose the coordinator with `COORDINATOR=greedy|llm`~~: done by B (`server.py` starts on Claude when `COORDINATOR=llm`; the dashboard dropdown has `claude`; `run_demo.py` uses it). ~~Planning outside the state lock~~: done by A (the server plans in deferred mode, so the dashboard keeps updating during a Claude replan).
+- ~~Add `anthropic` and pass the key through~~: done by B (`compose.yaml` loads `.env`; copy `example.env` to `.env`). ~~`httpx` in `requirements.txt`~~: done by A.
 
 **B**
 - ~~Breakdown recovery~~: done in Block 1 (the sim releases the queue keeping partial `remaining`; the coordinator replans and validates).

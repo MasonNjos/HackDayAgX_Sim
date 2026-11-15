@@ -162,3 +162,178 @@ def test_job_on_unknown_field_is_reported_not_crashing(state):
     assert_safe(plan, state)
     assert "J99" not in owners(plan)
     assert any(w.startswith("J99 unassignable: unknown field F99") for w in plan.warnings)
+
+
+# --- through the real sim: breakdown recovery -----------------------------------
+
+from orchestrator.models import DONE, PENDING  # noqa: E402
+from orchestrator.sim import Sim  # noqa: E402
+
+
+def sim_until_working(tid: str, job_type: str, extra_events=(), setup=None):
+    """Scenario without its scripted breakdown, stepped until tid is part-way through a job."""
+    state, events, meta = load_scenario(SCENARIO)
+    if setup:
+        setup(state)
+    events = [e for e in events if e.kind != "breakdown"] + list(extra_events)
+    sim = Sim(state, events, FleetAgent(), horizon=meta.get("horizon", 480))
+    for _ in range(400):
+        sim.step()
+        tr = state.tractors[tid]
+        job = state.jobs.get(tr.current_job) if tr.current_job else None
+        if tr.status == WORKING and job and job.type == job_type and 0.2 < job.remaining < 0.8:
+            return sim, job
+    raise AssertionError(f"{tid} never worked a {job_type} job")
+
+
+def break_now(sim, tid):
+    sim.inject(Event(sim.t, "breakdown", {"tractor": tid}))
+    sim.step()
+
+
+def test_sim_breakdown_of_only_mower_reports_unassignable(state):
+    sim, job = sim_until_working("T3", "mow")
+    t_break, remaining = sim.t, job.remaining
+    break_now(sim, "T3")
+    s = sim.state
+    assert s.tractors["T3"].status == BROKEN
+    assert job.status == PENDING and job.owner is None
+    assert job.remaining == pytest.approx(remaining)          # partial work kept
+    open_mow = [j for j in s.jobs.values() if j.type == "mow" and j.status != DONE]
+    assert job in open_mow
+    for j in open_mow:
+        assert all(st.target != j.id for q in sim.queues.values() for st in q)
+        msg = next(w for w in sim.last_warnings if w.startswith(f"{j.id} unassignable"))
+        assert "T3 is broken down" in msg
+        assert sim.why[j.id]["chosen"] is None
+    assert sim.last_explanation.startswith(f"T3 broke down at t={t_break} while mowing")
+    assert f"{round((1 - remaining) * 100)}% done" in sim.last_explanation
+    assert "cannot be assigned right now" in sim.last_explanation
+    assert sim.metrics.violations == []
+
+
+def test_sim_repair_puts_unassignable_mow_jobs_back(state):
+    sim, job = sim_until_working("T3", "mow")
+    break_now(sim, "T3")
+    sim.inject(Event(sim.t + 10, "repair", {"tractor": "T3"}))
+    sim.run()
+    assert job.status == DONE and job.completed_by == ["T3"]
+    assert sim.metrics.violations == []
+
+
+def test_sim_breakdown_mid_spray_moves_work_to_other_sprayer(state):
+    sim, job = sim_until_working("T2", "spray")
+    remaining = job.remaining
+    break_now(sim, "T2")
+    assert job.remaining == pytest.approx(remaining)
+    owners_now = [tid for tid, q in sim.queues.items() for st in q if st.target == job.id]
+    assert owners_now == ["T1"]
+    exp = sim.last_explanation
+    assert exp.startswith("T2 broke down") and f"{round((1 - remaining) * 100)}% done" in exp
+    assert "Its remaining work went to T1" in exp
+    assert sim.metrics.violations == []
+    sim.run()
+    assert job.status == DONE and job.completed_by == ["T2", "T1"]
+    assert sim.metrics.violations == []
+
+
+def test_invalid_plan_falls_back_to_a_safe_one(state, monkeypatch):
+    agent = FleetAgent()
+    first = agent.plan(state, None)
+    bad = {"T1": [Stop("job", "J3")], "T2": [Stop("job", "J3")], "T3": []}  # wrong implement + two owners
+    monkeypatch.setattr(agent, "_build", lambda s, t: (bad, {}, []))
+    plan = agent.plan(state, None)
+    assert validate(plan, state) == []
+    assert plan.queues == first.queues
+    assert any(w.startswith("SAFETY: plan rejected") for w in plan.warnings)
+    assert plan.explanation.startswith("Safety check rejected the new plan")
+
+
+
+def test_sim_breakdown_after_refuel_is_described_as_working(state):
+    """T1 starts just above reserve, so its first plan is [refuel D1, J6, ...]. Refuelling and
+    starting J6 don't trigger a replan, so the agent's last plan still has the refuel at its head."""
+    def low_t1(s):
+        s.tractors["T1"].fuel = s.tractors["T1"].reserve_fuel + 1
+    sim, job = sim_until_working("T1", "spray", setup=low_t1)
+    last = sim.dispatcher._last_queues["T1"]
+    assert last and last[0].kind == "refuel"          # the stale head this test is about
+    t_break, remaining = sim.t, job.remaining
+    break_now(sim, "T1")
+    exp = sim.last_explanation
+    assert exp.startswith(f"T1 broke down at t={t_break} while spraying")
+    assert f"{round((1 - remaining) * 100)}% done" in exp
+    assert "Its remaining work went to T2" in exp
+    assert sim.metrics.violations == []
+
+
+def test_fallback_keeps_safe_stops_and_marks_held_back_jobs(state, monkeypatch):
+    agent = FleetAgent()
+    agent.plan(state, None)
+    # Cut the east side off: the previous plan's east stops are now unsafe, its west
+    # stops are still fine. The fallback must keep those (no idle fleet), drop the rest.
+    state.blocked_edges = {"bridge", "south_road"}
+    east = {"J1", "J3", "J4", "J7", "J8"}
+    west = {"J2", "J5", "J6", "J9", "J10"}
+    bad = {"T1": [Stop("job", "J3")], "T2": [], "T3": []}            # mow job on a sprayer
+    rejected_why = {"J8": {"chosen": None, "eligible": [], "rejected": {"T2": "no open road"}}}
+    monkeypatch.setattr(agent, "_build", lambda s, t: (bad, rejected_why, ["J8 unassignable (test)"]))
+    plan = agent.plan(state, Event(0, "route_blocked", {"edge": "south_road"}))
+    assert validate(plan, state) == []
+    queued = set(owners(plan))
+    assert queued == west
+    assert "J8 unassignable (test)" in plan.warnings
+    assert any(w.startswith("SAFETY: plan rejected") and "only the safe stops" in w for w in plan.warnings)
+    assert plan.why["J8"]["rejected"] == {"T2": "no open road"}
+    for jid in east - {"J8"}:
+        assert plan.why[jid]["chosen"] is None and "held back" in plan.why[jid]["reason"]
+    assert "No change to assignments" not in plan.explanation
+    assert "held back because the new plan failed the safety check" in plan.explanation
+
+
+def test_fallback_on_first_plan_keeps_the_safe_part_of_it(state, monkeypatch):
+    """No previous plan to fall back to: the safe stops of the rejected plan are used."""
+    agent = FleetAgent()
+    bad = {"T1": [Stop("job", "J6"), Stop("job", "J3")], "T2": [Stop("job", "J2")], "T3": [Stop("job", "J5")]}
+    monkeypatch.setattr(agent, "_build", lambda s, t: (bad, {}, []))
+    plan = agent.plan(state, None)
+    assert validate(plan, state) == []
+    assert plan.queues == {"T1": [Stop("job", "J6")], "T2": [Stop("job", "J2")], "T3": [Stop("job", "J5")]}
+
+
+def test_old_queue_drops_refuel_done_after_a_full_tank_plan(state):
+    """A plan made on a full tank: [J?, refuel, ...]. After the job and the refuel the tank
+    is full again (not higher than before), but the refuel is still recognised as done."""
+    agent = FleetAgent()
+    t2 = state.tractors["T2"]
+    t2.fuel = t2.fuel_capacity
+    agent.plan(state, None)
+    agent._last_queues["T2"] = [Stop("job", "J2"), Stop("refuel", "D1"), Stop("job", "J4")]
+    state.jobs["J2"].status = DONE                     # J2 finished, then T2 refuelled to full
+    assert agent._old_queues(state)["T2"] == [Stop("job", "J4")]
+    t2.status = "refuelling"                           # still at the depot filling up: keep it
+    assert agent._old_queues(state)["T2"][0] == Stop("refuel", "D1")
+
+
+def test_fallback_previous_plan_skips_refuel_already_done(state, monkeypatch):
+    t1 = state.tractors["T1"]
+    t1.fuel = t1.reserve_fuel + 1
+    agent = FleetAgent()
+    first = agent.plan(state, None)
+    assert first.queues["T1"][0].kind == "refuel"
+    t1.fuel = t1.fuel_capacity                        # refuelled since that plan
+    monkeypatch.setattr(agent, "_build", lambda s, t: ({"T1": [Stop("job", "J3")], "T2": [], "T3": []}, {}, []))
+    plan = agent.plan(state, None)
+    assert validate(plan, state) == []
+    assert plan.queues["T1"] and plan.queues["T1"][0].kind == "job"
+
+
+def test_agent_remembers_the_plan_it_sent_even_if_rejected(state, monkeypatch):
+    agent = FleetAgent()
+    agent.plan(state, None)
+    bad = {"T1": [Stop("job", "J3")], "T2": [], "T3": []}
+    monkeypatch.setattr(agent, "_build", lambda s, t: (bad, {}, []))
+    monkeypatch.setattr(agent, "_fallback", lambda s, o, r: None)   # no safe plan could be built
+    plan = agent.plan(state, None)
+    assert any(w.startswith("SAFETY:") for w in plan.warnings)
+    assert agent._last_queues == bad                                 # the sim runs what was sent

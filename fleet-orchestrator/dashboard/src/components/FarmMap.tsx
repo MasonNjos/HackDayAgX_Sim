@@ -7,7 +7,7 @@ export const TRACTOR_COLORS = ["#2563eb", "#d97706", "#7c3aed", "#0891b2", "#db2
 const JOB_RANK: Record<string, number> = { in_progress: 0, assigned: 1, pending: 2, unassignable: 3, done: 4 };
 
 /** The job that best describes a field's state (active work first). */
-function fieldJob(jobs: Job[]): Job | undefined {
+export function fieldJob(jobs: Job[]): Job | undefined {
   return [...jobs].sort((a, b) => JOB_RANK[a.status] - JOB_RANK[b.status] || b.priority - a.priority)[0];
 }
 

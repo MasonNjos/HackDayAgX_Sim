@@ -185,3 +185,11 @@ details.ctl-group summary { cursor: pointer; font-size: 13px; font-weight: 600; 
   border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .log-dispatcher_error, .log-plan_discarded { color: var(--danger); }
+
+/* map view toggle and satellite map */
+.map-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+.map-head h2 { margin: 0; }
+.view-toggle { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.view-toggle button { border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.view-toggle button.on { background: var(--line); color: inherit; }
+.sat-map { width: 100%; aspect-ratio: 10.8 / 7.8; min-height: 280px; border-radius: 6px; z-index: 0; }

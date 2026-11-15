@@ -237,5 +237,5 @@ def deadline_warnings(plan: Plan, state: WorldState) -> list[str]:
             job = state.jobs[s.stop.target]
             if s.finish > job.deadline:
                 out.append(f"{job.id} may miss its deadline by {s.finish - job.deadline} min "
-                           f"({tid} ETA t={s.finish}, deadline t={job.deadline})")
+                           f"({tid} ETA minute {s.finish}, deadline minute {job.deadline})")
     return out

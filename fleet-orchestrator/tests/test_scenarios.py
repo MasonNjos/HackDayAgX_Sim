@@ -206,7 +206,7 @@ def test_sim_breakdown_of_only_mower_reports_unassignable(state):
         msg = next(w for w in sim.last_warnings if w.startswith(f"{j.id} unassignable"))
         assert "T3 is broken down" in msg
         assert sim.why[j.id]["chosen"] is None
-    assert sim.last_explanation.startswith(f"T3 broke down at t={t_break} while mowing")
+    assert sim.last_explanation.startswith(f"T3 broke down at minute {t_break} while mowing")
     assert f"{round((1 - remaining) * 100)}% done" in sim.last_explanation
     assert "cannot be assigned right now" in sim.last_explanation
     assert sim.metrics.violations == []
@@ -261,7 +261,7 @@ def test_sim_breakdown_after_refuel_is_described_as_working(state):
     t_break, remaining = sim.t, job.remaining
     break_now(sim, "T1")
     exp = sim.last_explanation
-    assert exp.startswith(f"T1 broke down at t={t_break} while spraying")
+    assert exp.startswith(f"T1 broke down at minute {t_break} while spraying")
     assert f"{round((1 - remaining) * 100)}% done" in exp
     assert "Its remaining work went to T2" in exp
     assert sim.metrics.violations == []

@@ -59,9 +59,10 @@ above its reserve. Add a {"kind": "refuel", "target": <depot id>} stop before a 
 How to work:
 - The brief includes a greedy plan that already passes every rule. Start from it and change it \
 only where you can show a gain: check alternatives with evaluate_queue (it gives each stop's \
-start/finish tick, fuel left and lateness, or why the queue fails).
+start/finish minute, fuel left and minutes late, or why the queue fails).
 - Do not leave out a job the greedy plan assigned.
 - Keep it quick: a few evaluate_queue calls at most, then call submit_plan.
+- Time: every time in the brief and tool results is in minutes since the start of the day (`now_minute`, deadlines, start/finish). Durations are minutes too. In `explanation` and `reasons`, write points in time as "minute 60" and durations as "12 min". Never use the word "tick".
 - In submit_plan, `explanation` is 2-4 plain sentences for a farm operator: what triggered this \
 plan, what changed and why, and any deadline at risk. `reasons` gives one short sentence per \
 assigned job saying why that tractor."""
@@ -83,7 +84,7 @@ TOOLS = [
     {
         "name": "evaluate_queue",
         "description": "Simulate one tractor's queue from its current position and return, per stop, "
-                       "the start and finish tick, fuel left and minutes late, or the reason the queue "
+                       "the start and finish minute, fuel left and minutes late, or the reason the queue "
                        "fails (fuel, unreachable road, wrong implement). Does not change anything.",
         "strict": True,
         "input_schema": {
@@ -335,8 +336,8 @@ class LLMFleetAgent:
             greedy_eta[tid] = [{"stop": f"{st.stop.kind}:{st.stop.target}", "finish": st.finish}
                                for st in sim.steps]
         return {
-            "now_tick": state.t,
-            "units": "1 tick = 1 minute; km; litres; hectares",
+            "now_minute": state.t,
+            "units": "times and durations in minutes; distances km; fuel litres; area hectares",
             "trigger": ({"kind": trigger.kind, "params": trigger.params} if trigger
                         else "start of day" if state.t == 0
                         else "routine replan, no new event: a tractor finished its queue, stalled "
@@ -344,8 +345,8 @@ class LLMFleetAgent:
             "tractors": [{
                 "id": t.id, "implement": t.implement, "can_do": t.capabilities, "status": t.status,
                 "at_node": t.location, "fuel": round(t.fuel, 1), "fuel_capacity": t.fuel_capacity,
-                "reserve": round(t.reserve_fuel, 1), "burn_per_tick": t.burn_rate,
-                "km_per_tick": t.speed, "hectares_per_tick": t.work_rate,
+                "reserve": round(t.reserve_fuel, 1), "litres_per_minute": t.burn_rate,
+                "km_per_minute": t.speed, "hectares_per_minute": t.work_rate,
                 "current_job": t.current_job, "must_keep": safety.must_keep_current(t, state),
             } for t in state.tractors.values()],
             "open_jobs": [{
@@ -358,7 +359,7 @@ class LLMFleetAgent:
             "road_km_between_nodes": km,
             "greedy_plan": {
                 "queues": {tid: _queue_str(q) for tid, q in greedy.queues.items()},
-                "finish_ticks": greedy_eta,
+                "finish_minutes": greedy_eta,
                 "warnings": greedy.warnings,
             },
             "broken_tractors": [t.id for t in state.tractors.values() if t.status == BROKEN],

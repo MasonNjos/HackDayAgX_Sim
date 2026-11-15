@@ -41,7 +41,7 @@ def test_breakdown_explanation_from_history():
     s.tractors[tid].location = s.job_node(jid)     # it was working at the field
     plan = agent.plan(s, Event(30, "breakdown", {"tractor": tid}))
     other = "T1" if tid == "T2" else "T2"
-    assert plan.explanation.startswith(f"{tid} broke down at t=30 while spraying")
+    assert plan.explanation.startswith(f"{tid} broke down at minute 30 while spraying")
     assert "(60% done)" in plan.explanation
     assert f"Its remaining work went to {other}" in plan.explanation
 
@@ -49,7 +49,7 @@ def test_breakdown_explanation_from_history():
 def test_explain_without_history_lists_queues():
     s = state()
     plan = FleetAgent().plan(s, None)
-    assert plan.explanation.startswith("Initial plan at t=0.")
+    assert plan.explanation.startswith("Initial plan at minute 0.")
     assert "T3:" in plan.explanation
 
 
@@ -59,7 +59,7 @@ def test_why_text_chosen_and_rejected():
     txt = why_text("J6", plan.why["J6"], s)
     chosen = plan.why["J6"]["chosen"]
     assert f"was given to {chosen}" in txt
-    assert "ETA t=" in txt and "Cost" in txt
+    assert "ETA minute " in txt and "Cost" in txt
     assert "T3 rejected: T3 carries a mower" in txt
 
 
@@ -117,7 +117,7 @@ def test_routine_replan_has_neutral_lead():
     agent.plan(s, None)
     s.t = 10
     plan = agent.plan(s, None)
-    assert plan.explanation.startswith("Replanned at t=10.")
+    assert plan.explanation.startswith("Replanned at minute 10.")
     assert "finished their queues" not in plan.explanation
 
 
@@ -132,7 +132,7 @@ def test_tractor_stalled_without_event_is_named():
     s.jobs[jid].remaining, s.jobs[jid].completed_by = 0.6, [tid]
     plan = agent.plan(s, None)
     other = "T1" if tid == "T2" else "T2"
-    assert plan.explanation.startswith(f"Replanned at t=30. {tid} went out of service at t=30 while spraying")
+    assert plan.explanation.startswith(f"Replanned at minute 30. {tid} went out of service at minute 30 while spraying")
     assert "(40% done)" in plan.explanation
     assert f"Its remaining work went to {other}" in plan.explanation
 
@@ -147,7 +147,7 @@ def test_breakdown_on_arrival_says_it_reached_the_field():
     s.tractors[tid].status = BROKEN
     s.tractors[tid].location = s.job_node(jid)        # standing on the field, remaining still 1.0
     plan = agent.plan(s, Event(8, "breakdown", {"tractor": tid}))
-    assert plan.explanation.startswith(f"{tid} broke down at t=8 just as it reached")
+    assert plan.explanation.startswith(f"{tid} broke down at minute 8 just as it reached")
     assert "on its way" not in plan.explanation.split(".")[0]
 
 
@@ -160,7 +160,7 @@ def test_duplicate_new_job_is_reported_ignored():
     s.t = 50
     dup = {"id": "J2", "type": "mow", "field": "F8", "priority": 3, "deadline": 300}
     plan = agent.plan(s, Event(50, "new_job", {"job": dup}))
-    assert plan.explanation.startswith("New job J2 was ignored at t=50: a job with that id already exists.")
+    assert plan.explanation.startswith("New job J2 was ignored at minute 50: a job with that id already exists.")
 
 
 def test_real_new_job_is_announced():
@@ -172,4 +172,4 @@ def test_real_new_job_is_announced():
     d = {"id": "J12", "type": "spray", "field": "F3", "priority": 2, "deadline": 300}
     s.jobs["J12"] = Job(**d, submitted_at=50)          # what the sim adds before replanning
     plan = agent.plan(s, Event(50, "new_job", {"job": d}))
-    assert plan.explanation.startswith("New job J12 (spraying Home Field, deadline t=300) submitted at t=50.")
+    assert plan.explanation.startswith("New job J12 (spraying Home Field, deadline minute 300) submitted at minute 50.")

@@ -16,10 +16,10 @@ export function TractorTable({ state, onBreak, onRepair }: {
                 <b>{t.id}</b> <span className="muted">{t.implement}</span></td>
               <td><span className={`pill ${t.status}`}>{t.status}</span>
                 {t.stall_reason && <div className="muted small">{t.stall_reason.replace(/_/g, " ")}</div>}</td>
-              <td className="fuelcell">
+              <td><div className="fuelcell">
                 <div className="bar"><div className={frac < 0.2 ? "low" : ""} style={{ width: `${frac * 100}%` }} /></div>
                 <span className="num">{Math.round(t.fuel)} L</span>
-              </td>
+              </div></td>
               <td className="queue">{t.queue.map((q) => q.replace("job:", "").replace("refuel:", "⛽")).join(" → ") || "—"}</td>
               <td>{t.status === "broken"
                 ? <button className="small-btn" onClick={() => onRepair(t.id)}>Repair</button>
@@ -51,12 +51,12 @@ export function JobTable({ state, selected, onWhy }: {
               <td><span className={`prio p${j.priority}`}>P{j.priority}</span></td>
               <td>{j.owner ?? "—"}</td>
               <td><span className={`pill ${j.status}`}>{j.status.replace("_", " ")}</span></td>
-              <td className="fuelcell">
+              <td><div className="fuelcell">
                 <div className="bar"><div className="work" style={{ width: `${(1 - j.remaining) * 100}%` }} /></div>
                 <span className="num">{Math.round((1 - j.remaining) * 100)}%</span>
-              </td>
+              </div></td>
               <td className={`num ${late ? "late" : ""}`}>
-                t={j.deadline}{j.status === "done" && <span className="muted"> (done {j.completed_at})</span>}
+                minute {j.deadline}{j.status === "done" && <span className="muted"> (done at {j.completed_at})</span>}
               </td>
               <td><button className="small-btn" onClick={() => onWhy(j.id)}>Why?</button></td>
             </tr>

@@ -112,20 +112,20 @@ def _breakdown_lead(tid: str, old_queues: dict[str, list[Stop]] | None,
         # Two part-done jobs on one field: prefer the one the last plan had at the head.
         j = next((w for w in working if head is not None and head.target == w.id), working[0])
         pct = round((1.0 - j.remaining) * 100)
-        return f"{tid} {what} at t={t} while {job_phrase(state, j.id)} ({pct}% done).", j.id
+        return f"{tid} {what} at minute {t} while {job_phrase(state, j.id)} ({pct}% done).", j.id
 
     if head is None:
-        return f"{tid} {what} at t={t} while idle.", None
+        return f"{tid} {what} at minute {t} while idle.", None
     if head.kind == "refuel":
         depot = state.depots.get(head.target)
         if depot and depot.node == loc:
-            return f"{tid} {what} at t={t} while refuelling at {head.target}.", None
-        return f"{tid} {what} at t={t} on its way to refuel at {head.target}.", None
+            return f"{tid} {what} at minute {t} while refuelling at {head.target}.", None
+        return f"{tid} {what} at minute {t} on its way to refuel at {head.target}.", None
     field = _field_name(state, head.target)
     if head.target in state.jobs and state.jobs[head.target].field in state.fields \
             and state.job_node(head.target) == loc:
-        return f"{tid} {what} at t={t} just as it reached {field} ({head.target}).", head.target
-    return f"{tid} {what} at t={t} on its way to {field} ({head.target}).", head.target
+        return f"{tid} {what} at minute {t} just as it reached {field} ({head.target}).", head.target
+    return f"{tid} {what} at minute {t} on its way to {field} ({head.target}).", head.target
 
 
 def _stopped_tractors(old_queues: dict[str, list[Stop]] | None, state: WorldState) -> list[str]:
@@ -140,19 +140,19 @@ def _lead(trigger: Event | None, old_queues, state: WorldState) -> tuple[str, st
     t = state.t
     if trigger is None:
         if old_queues is None:
-            return f"Initial plan at t={t}.", None, None
+            return f"Initial plan at minute {t}.", None, None
         stopped = _stopped_tractors(old_queues, state)
         if not stopped:
-            return f"Replanned at t={t}.", None, None
+            return f"Replanned at minute {t}.", None, None
         lines = [_breakdown_lead(tid, old_queues, state, t, "went out of service") for tid in stopped]
-        lead = f"Replanned at t={t}. " + " ".join(line for line, _ in lines)
+        lead = f"Replanned at minute {t}. " + " ".join(line for line, _ in lines)
         return lead, stopped[0], lines[0][1]
     p, k = trigger.params, trigger.kind
     if k == "breakdown":
         lead, job = _breakdown_lead(p.get("tractor", "?"), old_queues, state, t)
         return lead, p.get("tractor"), job
     if k == "repair":
-        return f"{p.get('tractor')} was repaired at t={t} and is back in service.", None, None
+        return f"{p.get('tractor')} was repaired at minute {t} and is back in service.", None, None
     if k in ("route_blocked", "route_unblocked"):
         e = state.edges.get(p.get("edge", ""))
         if e and e.label:
@@ -160,11 +160,11 @@ def _lead(trigger: Event | None, old_queues, state: WorldState) -> tuple[str, st
         else:
             name = f"road {p.get('edge')}"
         if k == "route_blocked":
-            return f"{name[0].upper() + name[1:]} was blocked at t={t}; routes now avoid it.", None, None
-        return f"{name[0].upper() + name[1:]} reopened at t={t}.", None, None
+            return f"{name[0].upper() + name[1:]} was blocked at minute {t}; routes now avoid it.", None, None
+        return f"{name[0].upper() + name[1:]} reopened at minute {t}.", None, None
     if k == "priority_change":
         pr = p.get("priority")
-        return (f"{p.get('job')} priority changed to {pr} ({PRIORITY.get(pr, pr)}) at t={t}; "
+        return (f"{p.get('job')} priority changed to {pr} ({PRIORITY.get(pr, pr)}) at minute {t}; "
                 f"queued jobs re-scored, jobs in progress untouched."), None, None
     if k == "new_job":
         d = p.get("job") or {}
@@ -175,11 +175,11 @@ def _lead(trigger: Event | None, old_queues, state: WorldState) -> tuple[str, st
             same = (j.type == d.get("type") and j.field == d.get("field") and j.deadline == d.get("deadline")
                     and j.submitted_at == d.get("submitted_at", t))
             if not same:
-                return f"New job {jid} was ignored at t={t}: a job with that id already exists.", None, None
-            return (f"New job {jid} ({job_phrase(state, jid)}, deadline t={j.deadline}) "
-                    f"submitted at t={t}."), None, None
-        return f"New job {jid} submitted at t={t}.", None, None
-    return f"t={t}: {k} {p}.", None, None
+                return f"New job {jid} was ignored at minute {t}: a job with that id already exists.", None, None
+            return (f"New job {jid} ({job_phrase(state, jid)}, deadline minute {j.deadline}) "
+                    f"submitted at minute {t}."), None, None
+        return f"New job {jid} submitted at minute {t}.", None, None
+    return f"At minute {t}: {k} {p}.", None, None
 
 
 def _assignment_detail(jid: str, tid: str, why: dict, state: WorldState) -> str:
@@ -191,7 +191,7 @@ def _assignment_detail(jid: str, tid: str, why: dict, state: WorldState) -> str:
     if rec.get("distance_km") is not None:
         bits.append(f"{rec['distance_km']:g} km drive")
     if rec.get("eta") is not None:
-        bits.append(f"ETA t={rec['eta']}")
+        bits.append(f"ETA minute {rec['eta']}")
     if rec.get("refuel_first"):
         bits.append("refuels first")
     return f"{tid} ({', '.join(bits)})" if bits else tid
@@ -269,17 +269,17 @@ def why_text(job_id: str, record: dict | None, state: WorldState) -> str:
     if job is None:
         return f"Unknown job {job_id}."
     head = (f"{job_id} ({job_phrase(state, job_id)}, priority {job.priority} "
-            f"({PRIORITY.get(job.priority, job.priority)}), deadline t={job.deadline})")
+            f"({PRIORITY.get(job.priority, job.priority)}), deadline minute {job.deadline})")
     status = ""
     if job.status == DONE:
-        status = f"\nDone at t={job.completed_at} by {', '.join(job.completed_by)}."
+        status = f"\nDone at minute {job.completed_at} by {', '.join(job.completed_by)}."
     elif job.status == IN_PROGRESS and job.owner:
         status = (f"\nIn progress on {job.owner}, {round((1 - job.remaining) * 100)}% done; "
                   f"a job in progress is never moved unless its tractor breaks down.")
     if not record:
         return f"{head}: not planned yet." + status
 
-    when = f" at t={record['planned_at']}" if record.get("planned_at") is not None else ""
+    when = f" at minute {record['planned_at']}" if record.get("planned_at") is not None else ""
     lines: list[str] = []
     if record.get("chosen") is None:
         reason = record.get("reason")
@@ -306,8 +306,8 @@ def why_text(job_id: str, record: dict | None, state: WorldState) -> str:
         detail.append(f"{record['distance_km']:g} km drive")
     if eta is not None:
         slack = record.get("slack", dl - eta)
-        detail.append(f"ETA t={eta} ({slack} min before the deadline)" if slack >= 0
-                      else f"ETA t={eta} ({-slack} min late; the best available)")
+        detail.append(f"ETA minute {eta} ({slack} min before the deadline)" if slack >= 0
+                      else f"ETA minute {eta} ({-slack} min late; the best available)")
     if record.get("refuel_first"):
         detail.append("refuels first")
     if detail:
@@ -324,7 +324,7 @@ def why_text(job_id: str, record: dict | None, state: WorldState) -> str:
     alts = record.get("alternatives") or {}
     for other in sorted(alts):
         o = opts.get(other, {})
-        extra = f", ETA t={o['eta']}" if "eta" in o else ""
+        extra = f", ETA minute {o['eta']}" if "eta" in o else ""
         lines.append(f"- {other} could do it too but costs more ({alts[other]}{extra}).")
     for other, r in sorted((record.get("rejected") or {}).items()):
         lines.append(f"- {other} rejected: {r}.")

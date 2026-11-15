@@ -34,6 +34,13 @@ export function ExplanationPanel({ state }: { state: State }) {
   );
 }
 
+/** Readable labels for scoring terms; any "*_ticks" term is a duration in minutes. */
+const TERM_LABEL: Record<string, string> = {
+  travel_ticks: "extra travel (min)", wait_ticks: "wait to start (min)",
+  late_ticks: "late (min)", refuel_ticks: "refuelling (min)", total: "cost score",
+};
+const termLabel = (k: string) => TERM_LABEL[k] ?? k.replace(/_ticks$/, " (min)").replace(/_/g, " ");
+
 export function WhyPanel({ why, onClose }: { why: Why | null; onClose: () => void }) {
   if (!why) return <p className="muted">Click <b>Why?</b> on a job (or a field on the map) to see why it went where it did.</p>;
   const rec = why.record as Record<string, any> | null;
@@ -44,7 +51,7 @@ export function WhyPanel({ why, onClose }: { why: Why | null; onClose: () => voi
       {rec?.cost && (
         <dl className="terms">
           {Object.entries(rec.cost as Record<string, number>).map(([k, v]) => (
-            <div key={k}><dt>{k.replace(/_/g, " ")}</dt><dd>{v}</dd></div>
+            <div key={k}><dt>{termLabel(k)}</dt><dd>{v}</dd></div>
           ))}
         </dl>
       )}
@@ -74,7 +81,7 @@ export function EventLog({ log }: { log: LogRecord[] }) {
   return (
     <ol className="log" reversed>
       {[...log].reverse().map((r, i) => (
-        <li key={i} className={`log-${r.kind}`}><span className="num muted">t={r.t}</span> {describe(r)}</li>
+        <li key={i} className={`log-${r.kind}`}><span className="num muted">min {r.t}</span> {describe(r)}</li>
       ))}
     </ol>
   );
@@ -116,7 +123,7 @@ export function OperatorControls({ state, onEvent, onJobs }: {
         <select value={job.priority} onChange={(e) => setJob({ ...job, priority: Number(e.target.value) })}>
           {[1, 2, 3].map((p) => <option key={p} value={p}>P{p}</option>)}
         </select>
-        <label className="inline">deadline t=
+        <label className="inline">deadline at minute
           <input type="number" min={state.t} value={job.deadline}
                  onChange={(e) => setJob({ ...job, deadline: Number(e.target.value) })} />
         </label>

@@ -102,4 +102,4 @@ class MaintenanceAgent:
         sim.log.write(sim.t, "maintenance", action="repair_crew_dispatched", target=target,
                       fix=fix_kind, fixed_at=at,
                       detail=f"Repair crew sent to {what}{f' ({why})' if why else ''}; "
-                             f"back in service at t={at} ({minutes} min).")
+                             f"back in service at minute {at} ({minutes} min).")

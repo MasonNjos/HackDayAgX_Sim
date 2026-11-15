@@ -149,7 +149,7 @@ class Runner:
         the run cannot safely continue: it stays paused until Reset clears the error.
         """
         self.paused = True
-        self.error = f"t={self.sim.t}: {exc!r}"
+        self.error = f"minute {self.sim.t}: {exc!r}"
         self.sim.log.write(self.sim.t, "sim_error", error=repr(exc), trace=traceback.format_exc(limit=5))
 
 
@@ -320,7 +320,7 @@ def _clean_job(d: dict, taken: set[str], t: int) -> dict:
         raise HTTPException(404, f"unknown field {d['field']!r}")
     job = {"id": jid, "type": d["type"], "field": d["field"],
            "priority": _as_int(d["priority"], f"job {jid} priority", 1, 3),
-           "deadline": _as_int(d["deadline"], f"job {jid} deadline (now t={t})", t),
+           "deadline": _as_int(d["deadline"], f"job {jid} deadline (now minute {t})", t),
            "submitted_at": t}
     taken.add(jid)
     return job
@@ -366,7 +366,7 @@ def why_text(job_id: str, rec: dict | None, sim: Sim) -> str:
         return f"{job_id} could not be assigned. {rej or rec.get('reason', '')}".strip()
     parts = [f"{job_id} went to {rec['chosen']}"]
     if "eta" in rec:
-        parts.append(f"finishing around t={rec['eta']} (deadline t={job.deadline})")
+        parts.append(f"finishing around minute {rec['eta']} (deadline minute {job.deadline})")
     text = ", ".join(parts) + "."
     alts = rec.get("alternatives") or {}
     if alts:

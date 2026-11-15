@@ -54,7 +54,7 @@ export default function App() {
           {state.planning && <span className="pill planning-pill"><i className="spinner" /> planning</span>}
         </div>
         <div className="clock num">
-          t = <b>{state.t}</b> <span className="muted">/ {state.horizon} min</span>
+          minute <b>{state.t}</b> <span className="muted">of {state.horizon}</span>
           {state.finished && <span className="pill done">finished</span>}
         </div>
         <div className="transport">

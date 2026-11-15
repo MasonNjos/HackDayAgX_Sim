@@ -120,11 +120,17 @@ class Sim:
             s.blocked_edges.discard(p["edge"])
             self._unreachable_logged.clear()
         elif ev.kind == "priority_change":
+            if p.get("job") not in s.jobs:
+                self.log.write(self.t, "warning", detail=f"priority_change for unknown job {p.get('job')!r} ignored")
+                return
             s.jobs[p["job"]].priority = int(p["priority"])
         elif ev.kind == "new_job":
             d = dict(p["job"])
             d.setdefault("submitted_at", self.t)
             job = job_from_dict(d)
+            if job.id in s.jobs:
+                self.log.write(self.t, "warning", detail=f"new_job {job.id!r} already exists; ignored")
+                return
             s.jobs[job.id] = job
         else:
             self.log.write(self.t, "warning", detail=f"unknown event kind {ev.kind!r}")
@@ -196,13 +202,17 @@ class Sim:
                 owner[job.id] = tid
                 new_queues[tid].append(stop)
 
-        # A job in progress always stays at the head of its tractor's queue.
-        for tr in s.tractors.values():
-            cj = tr.current_job
-            if cj and tr.status == WORKING and s.jobs[cj].status == IN_PROGRESS:
-                q = [st for st in new_queues[tr.id] if not (st.kind == "job" and st.target == cj)]
-                new_queues[tr.id] = [Stop("job", cj)] + q
-                owner[cj] = tr.id
+        # A job in progress always stays at the head of its owner's queue, whatever the
+        # tractor is doing this tick (only a breakdown/stall releases it).
+        for job in s.jobs.values():
+            if job.status != IN_PROGRESS or job.owner not in s.tractors:
+                continue
+            tr = s.tractors[job.owner]
+            if tr.status == BROKEN:
+                continue
+            q = [st for st in new_queues[tr.id] if not (st.kind == "job" and st.target == job.id)]
+            new_queues[tr.id] = [Stop("job", job.id)] + q
+            owner[job.id] = tr.id
 
         for job in s.jobs.values():
             if job.status in (DONE,):
@@ -274,12 +284,19 @@ class Sim:
 
         if leg or tr.location != target:
             if not leg and nav.route(s, tr.location, target) is None:
-                key = (tid, target)
-                if key not in self._unreachable_logged:
-                    self._unreachable_logged.add(key)
-                    self.log.write(self.t, "unreachable", tractor=tid, target=target, stop=stop.target)
+                # Drop the stop and hand the job back so a dispatcher can place it elsewhere.
+                q.pop(0)
+                if stop.kind == "job":
+                    job = s.jobs[stop.target]
+                    if job.owner == tid and job.status == ASSIGNED:
+                        job.status, job.owner = PENDING, None
                 tr.status = IDLE
-                return False
+                key = (tid, target)
+                if key in self._unreachable_logged:
+                    return False  # already replanned for this once; avoid a replan every tick
+                self._unreachable_logged.add(key)
+                self.log.write(self.t, "unreachable", tractor=tid, target=target, stop=stop.target)
+                return True
             if not self._burn(tr):
                 return True
             tr.status = TRAVELLING

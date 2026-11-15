@@ -51,6 +51,46 @@ def test_breakdown_releases_job_and_keeps_progress():
     assert 0 < j6.remaining < 1  # partial work kept
 
 
+def test_bad_events_do_not_crash_or_overwrite():
+    sim = make(FCFSDispatcher(), events=[])
+    sim.step()
+    sim.inject(Event(t=sim.t, kind="priority_change", params={"job": "NOPE", "priority": 3}))
+    sim.inject(Event(t=sim.t, kind="new_job", params={"job": {"id": "J2", "type": "spray", "field": "F1",
+                                                               "priority": 1, "deadline": 999}}))
+    for _ in range(25):
+        sim.step()
+    assert sim.state.jobs["J2"].priority == 2 and sim.state.jobs["J2"].remaining < 1
+
+
+def test_in_progress_job_survives_plan_that_omits_it():
+    class Forgetful:
+        name = "forgetful"
+        calls = 0
+        def plan(self, state, trigger):
+            self.calls += 1
+            q = {t: [] for t in state.tractors}
+            if self.calls == 1:
+                q["T2"] = [Stop("job", "J6")]
+            return Plan(queues=q)
+
+    sim = make(Forgetful(), events=[])
+    while sim.state.jobs["J6"].status != "in_progress":
+        sim.step()
+    sim.state.tractors["T2"].status = "refuelling"  # not WORKING this tick
+    sim.replan(None)
+    assert sim.state.jobs["J6"].owner == "T2" and sim.queues["T2"][0].target == "J6"
+
+
+def test_unreachable_stop_released_and_replanned():
+    sim = make(FCFSDispatcher(), events=[])
+    sim.state.blocked_edges.update({"bridge", "south_road"})  # east side cut off
+    for _ in range(5):
+        sim.step()
+    j1 = sim.state.jobs["J1"]  # F7 is east of the river
+    assert j1.owner is None and j1.status == "pending"
+    assert any(r["kind"] == "unreachable" for r in sim.log.records)
+
+
 def test_sim_rejects_bad_plans():
     class Bad:
         name = "bad"

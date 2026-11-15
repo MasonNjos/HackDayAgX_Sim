@@ -144,14 +144,18 @@ def post_event(ev: EventIn) -> dict:
 def post_jobs(body: JobsIn) -> dict:
     with runner.lock:
         s = runner.sim.state
+        # Ids already taken: existing jobs, plus new_job events queued but not yet applied
+        # (e.g. submitted before Start). Filled as we go, so duplicates within this request fail too.
+        taken = set(s.jobs) | {e.params["job"]["id"] for e in runner.sim.pending_events if e.kind == "new_job"}
         for d in body.jobs:
             missing = {"id", "type", "field", "priority", "deadline"} - d.keys()
             if missing:
                 raise HTTPException(400, f"job {d.get('id', '?')} missing {sorted(missing)}")
             if d["field"] not in s.fields:
                 raise HTTPException(404, f"unknown field {d['field']!r}")
-            if d["id"] in s.jobs:
-                raise HTTPException(409, f"job {d['id']!r} already exists")
+            if d["id"] in taken:
+                raise HTTPException(409, f"job {d['id']!r} already exists or is repeated in this list")
+            taken.add(d["id"])
         for d in body.jobs:
             job = {k: d[k] for k in ("id", "type", "field", "priority", "deadline")}
             job["submitted_at"] = s.t

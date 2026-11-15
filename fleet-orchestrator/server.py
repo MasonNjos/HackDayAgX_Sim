@@ -83,15 +83,22 @@ class Runner:
         its last frame and Reset could not recover it): log it, pause, and keep serving.
         """
         with self.lock:
-            if not self.paused and not self.sim.finished():
+            if not self.paused and self.error is None and not self.sim.finished():
                 try:
                     self.sim.step()
                 except Exception as exc:
-                    self.paused = True
-                    self.error = f"t={self.sim.t}: {exc!r}"
-                    self.sim.log.write(self.sim.t, "sim_error", error=repr(exc),
-                                       trace=traceback.format_exc(limit=5))
+                    self.fail(exc)
             return 1.0 / max(self.ticks_per_sec, 0.1)
+
+    def fail(self, exc: Exception) -> None:
+        """Record a sim exception and pause (caller holds the lock).
+
+        The failed tick may be half-applied (some tractors moved, events popped), so
+        the run cannot safely continue: it stays paused until Reset clears the error.
+        """
+        self.paused = True
+        self.error = f"t={self.sim.t}: {exc!r}"
+        self.sim.log.write(self.sim.t, "sim_error", error=repr(exc), trace=traceback.format_exc(limit=5))
 
 
 runner = Runner()
@@ -153,6 +160,11 @@ def post_event(ev: EventIn) -> dict:
         missing = [k for k in REQUIRED_PARAMS[ev.kind] if k not in params]
         if missing:
             raise HTTPException(400, f"{ev.kind} needs params {missing}")
+        for key in ("tractor", "edge"):
+            if key in params and not isinstance(params[key], str):
+                raise HTTPException(400, f"{key} must be a string id, got {params[key]!r}")
+        if ev.kind == "priority_change" and not isinstance(params["job"], str):
+            raise HTTPException(400, f"job must be a string id, got {params['job']!r}")
         for key, pool in (("tractor", s.tractors), ("edge", s.edges)):
             if key in params and params[key] not in pool:
                 raise HTTPException(404, f"unknown {key} {params[key]!r}")
@@ -207,8 +219,12 @@ def _as_int(v, name: str, lo: int | None = None, hi: int | None = None) -> int:
     if not math.isfinite(f) or f != int(f):
         raise HTTPException(400, f"{name} must be an integer, got {v!r}")
     n = int(f)
-    if (lo is not None and n < lo) or (hi is not None and n > hi):
+    if lo is not None and hi is not None and not lo <= n <= hi:
         raise HTTPException(400, f"{name} must be between {lo} and {hi}, got {n}")
+    if lo is not None and n < lo:
+        raise HTTPException(400, f"{name} must be at least {lo}, got {n}")
+    if hi is not None and n > hi:
+        raise HTTPException(400, f"{name} must be at most {hi}, got {n}")
     return n
 
 
@@ -239,13 +255,16 @@ def _clean_job(d: dict, taken: set[str], t: int) -> dict:
         raise HTTPException(400, f"job id must be a string, got {jid!r}")
     if jid in taken:
         raise HTTPException(409, f"job {jid!r} already exists or is repeated in this list")
+    for key in ("type", "field"):
+        if not isinstance(d[key], str):
+            raise HTTPException(400, f"job {jid} {key} must be a string, got {d[key]!r}")
     if d["type"] not in JOB_TYPES:
         raise HTTPException(400, f"job {jid}: no tractor can do {d['type']!r}; expected one of {JOB_TYPES}")
     if d["field"] not in s.fields:
         raise HTTPException(404, f"unknown field {d['field']!r}")
     job = {"id": jid, "type": d["type"], "field": d["field"],
            "priority": _as_int(d["priority"], f"job {jid} priority", 1, 3),
-           "deadline": _as_int(d["deadline"], f"job {jid} deadline", 0),
+           "deadline": _as_int(d["deadline"], f"job {jid} deadline (now t={t})", t),
            "submitted_at": t}
     taken.add(jid)
     return job
@@ -258,8 +277,12 @@ def _apply_pending() -> None:
         return  # step() applies them together with the initial plan
     while sim.pending_events and sim.pending_events[0].t <= sim.t:
         ev = sim.pending_events.pop(0)
-        sim.apply_event(ev)
-        sim.replan(ev)
+        try:
+            sim.apply_event(ev)
+            sim.replan(ev)
+        except Exception as exc:  # same handling as a failed tick: pause until Reset
+            runner.fail(exc)
+            raise HTTPException(500, f"applying {ev.kind} failed ({exc!r}); the run is paused, press Reset")
 
 
 @app.get("/api/why/{job_id}")
@@ -278,8 +301,8 @@ def why_text(job_id: str, rec: dict | None, sim: Sim) -> str:
         from orchestrator import explain  # type: ignore
         if hasattr(explain, "why_text"):
             return explain.why_text(job_id, rec, sim.state)
-    except Exception as exc:  # a bad record must not turn "Why?" into a 500
-        sim.log.write(sim.t, "warning", detail=f"why_text failed for {job_id}: {exc!r}")
+    except Exception:  # a bad record must not turn "Why?" into a 500 (read-only: nothing logged)
+        pass
     job = sim.state.jobs[job_id]
     if rec is None:
         return f"{job_id} has not been planned yet ({sim.dispatcher.name})."
@@ -307,6 +330,8 @@ def post_speed(body: SpeedIn) -> dict:
                 raise HTTPException(400, "ticks_per_sec must be a finite number")
             runner.ticks_per_sec = min(max(body.ticks_per_sec, 0.1), 60.0)
         if body.paused is not None:
+            if not body.paused and runner.error is not None:
+                raise HTTPException(409, f"the run stopped on an error ({runner.error}); press Reset to start over")
             runner.paused = body.paused
         return _state()
 

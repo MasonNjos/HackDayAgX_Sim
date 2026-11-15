@@ -150,3 +150,78 @@ def test_why_falls_back_when_explain_raises(monkeypatch):
     r = client.get("/api/why/J1")
     assert r.status_code == 200
     assert r.json()["text"].startswith("J1")
+
+
+# --- second review --------------------------------------------------------------------
+
+@pytest.mark.parametrize("kind,params", [
+    ("breakdown", {"tractor": ["T1"]}), ("route_blocked", {"edge": {"id": "bridge"}}),
+    ("priority_change", {"job": {}, "priority": 3}), ("priority_change", {"job": ["J1"], "priority": 3}),
+])
+def test_unhashable_event_params_are_400_not_500(kind, params):
+    assert client.post("/api/event", json={"kind": kind, "params": params}).status_code == 400
+
+
+@pytest.mark.parametrize("bad", [{"field": ["F2"]}, {"field": {}}, {"type": ["mow"]}])
+def test_unhashable_job_values_are_400_not_500(bad):
+    job = {"type": "mow", "field": "F2", "priority": 2, "deadline": 400} | bad
+    assert client.post("/api/jobs", json={"jobs": [job]}).status_code == 400
+
+
+def _break_sim(monkeypatch):
+    server.runner.paused = False
+    monkeypatch.setattr(server.runner.sim, "step", lambda: (_ for _ in ()).throw(KeyError("boom")))
+    server.runner.tick()
+    monkeypatch.undo()
+
+
+def test_cannot_resume_after_error_until_reset(monkeypatch):
+    _break_sim(monkeypatch)
+    t = server.runner.sim.t
+    r = client.post("/api/speed", json={"paused": False})
+    assert r.status_code == 409 and "Reset" in r.json()["detail"]
+    assert server.runner.paused is True
+    server.runner.tick()                                   # loop does not step a failed run
+    assert server.runner.sim.t == t
+    assert client.post("/api/speed", json={"ticks_per_sec": 5}).status_code == 200   # speed still OK
+    client.post("/api/reset", json={"dispatcher": "coordinator"})
+    assert client.post("/api/speed", json={"paused": False}).status_code == 200
+
+
+def test_error_applying_an_event_pauses_and_reports(monkeypatch):
+    start()
+    server.runner.paused = False
+    monkeypatch.setattr(server.runner.sim, "apply_event", lambda ev: (_ for _ in ()).throw(RuntimeError("bad apply")))
+    r = client.post("/api/event", json={"kind": "breakdown", "params": {"tractor": "T1"}})
+    assert r.status_code == 500 and "press Reset" in r.json()["detail"]
+    assert server.runner.paused is True
+    assert "bad apply" in client.get("/api/state").json()["error"]
+
+
+def test_range_messages_name_only_the_real_bound():
+    r = client.post("/api/jobs", json={"jobs": [{"type": "mow", "field": "F2", "priority": 2, "deadline": -5}]})
+    assert "at least 0" in r.json()["detail"] and "None" not in r.json()["detail"]
+    r = client.post("/api/event", json={"kind": "priority_change", "params": {"job": "J1", "priority": 7}})
+    assert "between 1 and 3" in r.json()["detail"]
+
+
+def test_deadline_in_the_past_is_rejected():
+    start()
+    with server.runner.lock:
+        for _ in range(20):
+            server.runner.sim.step()
+    t = server.runner.sim.t
+    past = {"type": "mow", "field": "F2", "priority": 2, "deadline": t - 1}
+    r = client.post("/api/jobs", json={"jobs": [past]})
+    assert r.status_code == 400 and f"at least {t}" in r.json()["detail"]
+    assert client.post("/api/jobs", json={"jobs": [past | {"deadline": t}]}).status_code == 200
+
+
+def test_why_fallback_does_not_write_to_the_log(monkeypatch):
+    start()
+    from orchestrator import explain
+    monkeypatch.setattr(explain, "why_text", lambda *a: (_ for _ in ()).throw(KeyError("x")))
+    n = len(server.runner.sim.log.records)
+    for _ in range(3):
+        assert client.get("/api/why/J1").status_code == 200
+    assert len(server.runner.sim.log.records) == n

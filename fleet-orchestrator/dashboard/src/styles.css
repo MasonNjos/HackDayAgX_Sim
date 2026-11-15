@@ -171,3 +171,17 @@ details.ctl-group summary { cursor: pointer; font-size: 13px; font-weight: 600; 
 .log-violation { color: var(--bad); font-weight: 600; }
 .log-event { font-weight: 600; }
 .log-job_completed { color: var(--accent); }
+
+/* plan source + live planning */
+.badge.claude-coordinator { background: #b4572e; }
+.explain-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.source { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, var(--card)); color: var(--ink); }
+.source.src-claude-coordinator { background: color-mix(in srgb, #b4572e 22%, var(--card)); }
+.source.src-greedy-fallback { background: color-mix(in srgb, var(--danger) 22%, var(--card)); }
+.planning { font-size: 12px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+.planning-pill { display: inline-flex; align-items: center; gap: 5px; }
+.spinner { width: 10px; height: 10px; border-radius: 50%; display: inline-block;
+  border: 2px solid var(--line); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.log-dispatcher_error, .log-plan_discarded { color: var(--danger); }

@@ -63,6 +63,8 @@ export interface State {
   tractors: Tractor[];
   jobs: Job[];
   explanation: string;
+  plan_source: string;      // who made the committed plan: "claude-coordinator", "greedy fallback", "coordinator", "baseline"
+  planning: { trigger: string | null; seconds: number; dispatcher: string } | null; // a replan is being computed
   warnings: string[];
   log: LogRecord[];
   metrics: Summary;

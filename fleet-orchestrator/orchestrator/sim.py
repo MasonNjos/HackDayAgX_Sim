@@ -21,6 +21,7 @@ so a newly blocked edge takes effect at the next node it reaches.
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 
 from . import nav_agent as nav
@@ -64,6 +65,13 @@ class Sim:
         self.last_warnings: list[str] = []
         self._unreachable_logged: set[tuple[str, str]] = set()
         self.started = False
+        self.last_source = ""      # who made the committed plan, e.g. "claude-coordinator" / "greedy fallback"
+        # Deferred planning (live server): replan() only records a request; the server calls the
+        # dispatcher outside its lock (a Claude replan takes seconds) and then commit_plan().
+        # Offline runs (run_demo, tests) keep defer_plans False and plan synchronously.
+        self.defer_plans = False
+        self.plan_requests: list[Event | None] = []
+        self.version = 0  # bumped on every change to the world, so a stale plan can be detected
 
     # ------------------------------------------------------------------ running
 
@@ -89,7 +97,9 @@ class Sim:
         self.pending_events.sort(key=lambda e: e.t)
 
     def step(self) -> None:
-        """Advance one tick."""
+        """Advance one tick. In deferred mode, does nothing while a plan request is waiting."""
+        if self.defer_plans and self.plan_requests:
+            return
         if not self.started:
             self.started = True
             self.log.write(self.t, "run_start", tractors=list(self.state.tractors), jobs=list(self.state.jobs))
@@ -98,6 +108,8 @@ class Sim:
         while self.pending_events and self.pending_events[0].t <= self.t:
             ev = self.pending_events.pop(0)
             self.process_event(ev)
+        if self.defer_plans and self.plan_requests:
+            return  # time stands still until the new plan is committed (same as an offline run)
 
         need_replan = False
         for tid in sorted(self.state.tractors):
@@ -109,6 +121,7 @@ class Sim:
 
         self.metrics.record_tick(self.state)
         self.state.t += 1
+        self.version += 1
         if need_replan and not self.finished():
             self.replan(None)
 
@@ -125,6 +138,7 @@ class Sim:
         self.replan(ev)
 
     def apply_event(self, ev: Event) -> None:
+        self.version += 1
         s, p = self.state, ev.params
         self.log.write(self.t, "event", event=ev.kind, params=p)
         if ev.kind == "breakdown":
@@ -172,6 +186,9 @@ class Sim:
     # ------------------------------------------------------------------ planning
 
     def replan(self, trigger: Event | None) -> None:
+        if self.defer_plans:
+            self.plan_requests.append(trigger)
+            return
         try:
             plan = self.dispatcher.plan(self.state, trigger)
         except Exception as exc:  # a crashing dispatcher must not kill the demo
@@ -252,15 +269,46 @@ class Sim:
         self.last_explanation = plan.explanation
         self.last_warnings = list(plan.warnings)
         self.metrics.replans += 1
+        self.version += 1
+        self.last_source = getattr(plan, "source", None) or (
+            "greedy fallback" if plan.explanation.startswith("[greedy fallback]")
+            else getattr(self.dispatcher, "name", ""))
 
         for jid, tid in owner.items():
             if old_owner.get(jid) != tid:
                 self.log.write(self.t, "assignment", job=jid, tractor=tid, previous=old_owner.get(jid))
-        self.log.write(self.t, "plan", trigger=trigger.kind if trigger else None,
+        self.log.write(self.t, "plan", trigger=trigger.kind if trigger else None, source=self.last_source,
                        queues={tid: [f"{st.kind}:{st.target}" for st in q] for tid, q in new_queues.items()},
                        explanation=plan.explanation, warnings=plan.warnings)
 
     # ------------------------------------------------------------------ movement / work
+
+    # --- deferred planning (used by the live server) ---------------------------------
+
+    def take_plan_request(self) -> tuple[Event | None, WorldState, int] | None:
+        """Pop the waiting plan requests as one: (trigger, state copy, version), or None.
+
+        Several requests (e.g. two events in one tick) collapse into one plan, made for the
+        latest state; the trigger passed on is the most recent event.
+        """
+        if not self.plan_requests:
+            return None
+        events = [r for r in self.plan_requests if r is not None]
+        self.plan_requests.clear()
+        return (events[-1] if events else None), copy.deepcopy(self.state), self.version
+
+    def commit_plan(self, plan: Plan | None, trigger: Event | None, version: int, error: str | None = None) -> bool:
+        """Apply a plan computed off-lock. Returns False if it was stale (the world changed meanwhile)."""
+        if error is not None:
+            self.log.write(self.t, "dispatcher_error", error=error)
+            return False
+        if version != self.version:
+            self.log.write(self.t, "plan_discarded", reason="the world changed while planning; replanning")
+            if not self.plan_requests:
+                self.plan_requests.append(trigger)
+            return False
+        self.apply_plan(plan, trigger)
+        return True
 
     def _sync_current(self, tid: str) -> None:
         """Contract rule 2: current_job is the job at the head of the queue (travelling or working)."""
@@ -448,6 +496,7 @@ class Sim:
             "tractors": tractors,
             "jobs": [vars(j) | {"remaining": round(j.remaining, 3)} for j in s.jobs.values()],
             "explanation": self.last_explanation,
+            "plan_source": self.last_source,
             "warnings": self.last_warnings,
             "log": self.log.recent(50),
             "metrics": self.metrics.summary(s),

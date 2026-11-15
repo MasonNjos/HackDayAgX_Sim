@@ -5,6 +5,12 @@
 One live simulation runs in a background thread. Every endpoint is a plain `def`, so
 FastAPI runs it in its threadpool and the blocking lock never stalls the event loop.
 
+Planning runs OUTSIDE the lock: a Claude replan takes seconds, and holding the lock would
+freeze /api/state (and the dashboard) for that long. The sim is in deferred mode: it
+records plan requests and stops advancing time; the sim thread copies the state under the
+lock, calls the dispatcher without it, then commits the plan under the lock. If the world
+changed meanwhile (e.g. an operator click), the stale plan is dropped and replanned.
+
 Routes (all under /api; the Vite dev server proxies /api here):
   GET  /api/state                 full snapshot for the dashboard
   POST /api/event                 {"kind": "breakdown", "params": {"tractor": "T2"}}
@@ -12,7 +18,7 @@ Routes (all under /api; the Vite dev server proxies /api here):
                                   ("id" is optional: the server picks the next free J<n>)
   GET  /api/why/{job_id}          scoring record + text for "why this tractor?"
   POST /api/speed                 {"ticks_per_sec": 4, "paused": false}
-  POST /api/reset                 {"dispatcher": "coordinator" | "baseline"}
+  POST /api/reset                 {"dispatcher": "coordinator" | "claude" | "baseline"}
 If dashboard/dist exists (built React app), it is served at /.
 """
 from __future__ import annotations
@@ -53,6 +59,7 @@ class Runner:
         self.paused = True  # start paused so the presenter controls the start
         self.sim: Sim | None = None
         self.error: str | None = None  # last exception from a sim step (sim is paused when set)
+        self.planning: dict | None = None  # {"since": monotonic, "trigger": str|None} while a plan is computed
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         # COORDINATOR=llm (in .env) starts on the Claude coordinator, also after an auto-reload.
@@ -63,6 +70,7 @@ class Runner:
         disp = DISPATCHERS[dispatcher]()
         sim = Sim(state, events, disp, EventLog(dispatcher=disp.name), horizon=meta.get("horizon", 480))
         MaintenanceAgent().attach(sim)  # repair crews for breakdowns and blocked roads, every dispatcher
+        sim.defer_plans = True           # plan off-lock (see module docstring)
         with self.lock:
             self.sim = sim
             self.paused = True
@@ -82,18 +90,57 @@ class Runner:
             self._stop.wait(self.tick())
 
     def tick(self) -> float:
-        """Advance one step if running; returns the delay until the next one.
+        """One sim step (if running), planning off-lock whenever the sim asks for a plan.
+        Returns the delay until the next call.
+
+        A step that hits an event or the start stops and requests a plan; we compute it
+        without the lock, commit it, and step again to finish the tick, so one tick()
+        advances time like one offline Sim.step(). Plan requests are served even while
+        paused, so an operator click replans at once.
 
         An exception in the sim must not kill this thread (the dashboard would freeze on
         its last frame and Reset could not recover it): log it, pause, and keep serving.
         """
-        with self.lock:
-            if not self.paused and self.error is None and not self.sim.finished():
+        delay = 1.0 / max(self.ticks_per_sec, 0.1)
+        start_t = None  # sim time when this tick started stepping
+        for _ in range(10):  # at most a few plan/step rounds per tick (events + end-of-tick replans)
+            with self.lock:
+                sim = self.sim
+                if self.error is not None:
+                    return delay
+                if not sim.plan_requests:
+                    running = not self.paused and not sim.finished()
+                    if not running or (start_t is not None and sim.t > start_t):
+                        break  # nothing to do, or this tick's minute is done
+                    if start_t is None:
+                        start_t = sim.t
+                    try:
+                        sim.step()
+                    except Exception as exc:
+                        self.fail(exc)
+                        break
+                    if not sim.plan_requests:
+                        break
+                trigger, state_copy, version = sim.take_plan_request()
+                self.planning = {"since": time.monotonic(), "trigger": trigger.kind if trigger else None}
+
+            # Off-lock: the dashboard keeps polling and operators can still click.
+            plan, error = None, None
+            try:
+                plan = sim.dispatcher.plan(state_copy, trigger)
+            except Exception as exc:  # a crashing dispatcher must not kill the demo
+                error = repr(exc)
+
+            with self.lock:
+                self.planning = None
+                if self.sim is not sim:
+                    break  # Reset happened while planning; drop this plan
                 try:
-                    self.sim.step()
+                    sim.commit_plan(plan, trigger, version, error)
                 except Exception as exc:
                     self.fail(exc)
-            return 1.0 / max(self.ticks_per_sec, 0.1)
+                    break
+        return delay
 
     def fail(self, exc: Exception) -> None:
         """Record a sim exception and pause (caller holds the lock).
@@ -145,6 +192,10 @@ def _state() -> dict:
     snap = runner.sim.snapshot()
     snap["speed"] = {"ticks_per_sec": runner.ticks_per_sec, "paused": runner.paused}
     snap["error"] = runner.error
+    p = runner.planning
+    snap["planning"] = None if p is None else {
+        "trigger": p["trigger"], "seconds": round(time.monotonic() - p["since"], 1),
+        "dispatcher": runner.sim.dispatcher.name}
     snap["dispatchers"] = list(DISPATCHERS)
     return snap
 

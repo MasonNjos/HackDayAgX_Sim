@@ -1,0 +1,13 @@
+# Dev setup: the source folder is mounted, so code edits show up without rebuilding.
+#   docker compose up --build            -> server + dashboard at http://localhost:8000 (auto-reload)
+#   docker compose run --rm app pytest   -> tests
+#   docker compose run --rm app python run_demo.py   -> writes out/ on your machine
+# Rebuild (--build) only after changing requirements.txt.
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    command: uvicorn server:app --host 0.0.0.0 --port 8000 --reload

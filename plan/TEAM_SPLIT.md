@@ -17,6 +17,8 @@ Nav Agent goes to A because the sim needs routes to move tractors. B only calls 
 | `orchestrator/metrics.py`, `eventlog.py` | `tests/test_invariants.py`, `tests/test_scenarios.py` | |
 | `server.py`, `dashboard/index.html`, `run_demo.py` | | |
 
+Run everything through Docker so nobody has to install packages (from `fleet-orchestrator/`): `docker compose up --build` starts the server and dashboard on http://localhost:8000 and reloads when code changes; `docker compose run --rm app pytest` runs the tests; `docker compose run --rm app python run_demo.py` runs the demo. Rebuild only after changing `requirements.txt`. The README should give these commands too.
+
 Git: each person works on their own branch (`a/...`, `b/...`) and merges to `main` at every sync point. Changes to a shared file go in a small commit of their own, announced to the other person first.
 
 ## 12:00–12:30: write the contract together (do not skip)

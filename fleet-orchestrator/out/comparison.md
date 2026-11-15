@@ -1,6 +1,6 @@
 # Coordinator vs FCFS baseline
 
-Scenario: `scenarios/farm.json` (11 jobs incl. ones added by events). Same scenario, same scripted events, same simulator.
+Scenario: `scenarios\farm.json` (11 jobs incl. ones added by events). Same scenario, same scripted events, same simulator.
 
 | Metric | Baseline (FCFS) | Coordinator | Better |
 |---|---:|---:|:---:|

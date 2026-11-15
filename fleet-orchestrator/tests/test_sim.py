@@ -91,6 +91,35 @@ def test_unreachable_stop_released_and_replanned():
     assert any(r["kind"] == "unreachable" for r in sim.log.records)
 
 
+def test_refuel_wait_resets_when_depot_changes():
+    from orchestrator.models import REFUEL_TICKS, Depot
+
+    class Refuel:
+        name = "refuel"
+        depot = "D1"
+        def plan(self, state, trigger):
+            return Plan(queues={"T1": [Stop("refuel", self.depot)], "T2": [], "T3": []})
+
+    d = Refuel()
+    sim = make(d, events=[])
+    sim.state.depots["D2"] = Depot("D2", "west")  # 2 km from the start depot
+    sim.state.tractors["T1"].fuel = 50
+    for _ in range(REFUEL_TICKS - 1):  # wait at D1, one tick short of full
+        sim.step()
+    assert sim.state.tractors["T1"].fuel == 50
+    d.depot = "D2"
+    sim.replan(None)
+    sim.step()  # first tick travelling to D2 must not finish the refuel
+    assert sim.state.tractors["T1"].fuel < 50
+    while sim.state.tractors["T1"].location != "west":
+        sim.step()
+    for _ in range(REFUEL_TICKS - 1):
+        sim.step()
+        assert sim.state.tractors["T1"].fuel < 200  # full wait at D2 required
+    sim.step()
+    assert sim.state.tractors["T1"].fuel == 200
+
+
 def test_sim_rejects_bad_plans():
     class Bad:
         name = "bad"

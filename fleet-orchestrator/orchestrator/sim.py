@@ -54,7 +54,7 @@ class Sim:
         self.queues: dict[str, list[Stop]] = {tid: [] for tid in state.tractors}
         self.legs: dict[str, Leg | None] = {tid: None for tid in state.tractors}
         self.stall_reason: dict[str, str] = {}
-        self.refuel_wait: dict[str, int] = {}
+        self.refuel_wait: dict[str, tuple[str, int]] = {}  # tractor -> (depot, ticks waited there)
         self.why: dict[str, dict] = {}
         self.last_explanation = ""
         self.last_warnings: list[str] = []
@@ -251,7 +251,9 @@ class Sim:
         tr = self.state.tractors[tid]
         q = self.queues[tid]
         tr.current_job = q[0].target if (tr.status != BROKEN and q and q[0].kind == "job") else None
-        if not (q and q[0].kind == "refuel"):
+        # Reset the refuel wait unless the head is still a refuel at the same depot.
+        wait = self.refuel_wait.get(tid)
+        if wait and not (q and q[0].kind == "refuel" and q[0].target == wait[0]):
             self.refuel_wait.pop(tid, None)
 
     def _stop_node(self, stop: Stop) -> str:
@@ -321,8 +323,12 @@ class Sim:
         # At the stop.
         if stop.kind == "refuel":
             tr.status = REFUELLING
-            self.refuel_wait[tid] = self.refuel_wait.get(tid, 0) + 1
-            if self.refuel_wait[tid] >= REFUEL_TICKS:
+            depot, waited = self.refuel_wait.get(tid, (stop.target, 0))
+            if depot != stop.target:  # head changed depot without a sync; start over
+                waited = 0
+            waited += 1
+            self.refuel_wait[tid] = (stop.target, waited)
+            if waited >= REFUEL_TICKS:
                 tr.fuel = tr.fuel_capacity
                 self.refuel_wait.pop(tid, None)
                 q.pop(0)

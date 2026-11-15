@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { FarmMap } from "./components/FarmMap";
 import { EventLog, ExplanationPanel, OperatorControls, WhyPanel, sourceLabel } from "./components/Panels";
@@ -7,18 +7,27 @@ import type { Edge, State, Why } from "./types";
 
 const POLL_MS = 400;
 
+/** Server dispatcher name (state.dispatcher) -> key accepted by POST /api/reset. */
+const resetKey = (name: string) => (name === "claude-coordinator" ? "claude" : name);
+
 export default function App() {
   const [state, setState] = useState<State | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [why, setWhy] = useState<Why | null>(null);
+  const [resetTo, setResetTo] = useState<string | null>(null); // null = the current dispatcher
+  const [resetting, setResetting] = useState(false);
+  // Bumped by every operator action. A poll that started before the latest action is dropped,
+  // so a stale /api/state can't overwrite the fresh state the action returned (e.g. after Reset).
+  const actionSeq = useRef(0);
 
   // Poll /api/state. Actions also return the fresh state, so the UI updates at once.
   useEffect(() => {
     let alive = true;
     const tick = async () => {
+      const seq = actionSeq.current;
       try {
         const s = await api.state();
-        if (alive) { setState(s); setError((e) => (e?.startsWith("API") ? null : e)); }
+        if (alive && seq === actionSeq.current) { setState(s); setError((e) => (e?.startsWith("API") ? null : e)); }
       } catch {
         if (alive) setError("API unreachable — is the server running on :8000?");
       }
@@ -29,8 +38,17 @@ export default function App() {
   }, []);
 
   const run = useCallback(async (p: Promise<State>) => {
+    actionSeq.current += 1;
     try { setState(await p); setError(null); } catch (e) { setError((e as Error).message); }
   }, []);
+
+  const doReset = useCallback(async (dispatcher: string) => {
+    setResetting(true);
+    setWhy(null);
+    await run(api.reset(dispatcher));
+    setResetTo(null);
+    setResetting(false);
+  }, [run]);
 
   const showWhy = useCallback(async (job: string) => {
     try { setWhy(await api.why(job)); } catch (e) { setError((e as Error).message); }
@@ -67,18 +85,23 @@ export default function App() {
               {[1, 2, 5, 10, 20, 50].map((v) => <option key={v} value={v}>{v} min/s</option>)}
             </select>
           </label>
-          <label className="inline">reset as
-            <select value="" onChange={(e) => { if (e.target.value) { setWhy(null); run(api.reset(e.target.value)); } }}>
-              <option value="">choose…</option>
+          <label className="inline">coordinator
+            {/* Holds the user's choice (not reset to a placeholder on every 400 ms poll, which
+                fought the open menu); the Reset button applies it. */}
+            <select value={resetTo ?? resetKey(state.dispatcher)} onChange={(e) => setResetTo(e.target.value)}>
               {state.dispatchers.map((d) => <option key={d} value={d}>{sourceLabel(d)}</option>)}
             </select>
           </label>
+          <button disabled={resetting} onClick={() => doReset(resetTo ?? resetKey(state.dispatcher))}
+                  title="Restart the scenario from minute 0 with the chosen coordinator">
+            {resetting ? "Resetting…" : "↺ Reset"}
+          </button>
         </div>
       </header>
 
       {state.error && (
         <div className="error" role="alert">
-          Simulation stopped on an error: {state.error}. Use “reset as” to start over.
+          Simulation stopped on an error: {state.error}. Use ↺ Reset to start over.
         </div>
       )}
       {error && <div className="error" role="alert">{error}<button className="small-btn" onClick={() => setError(null)}>×</button></div>}

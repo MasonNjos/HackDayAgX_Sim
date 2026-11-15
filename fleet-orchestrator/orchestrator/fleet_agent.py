@@ -29,7 +29,7 @@ from . import safety_agent as safety
 from .models import BROKEN, DONE, REFUELLING, Event, Job, Plan, Stop, WorldState
 
 LATE_PENALTY = 5.0   # cost per tick past the deadline
-WAIT_WEIGHT = 0.2    # cost per tick before the tractor can start (spreads load)
+WAIT_WEIGHT = 1.0    # cost per tick before the tractor can start; high enough that idle tractors take work instead of one tractor queueing it all
 LOW_FUEL = 0.25      # fraction of capacity: finishing a queue below this adds a refuel stop
 
 

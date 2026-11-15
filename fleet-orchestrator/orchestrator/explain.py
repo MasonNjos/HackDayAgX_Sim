@@ -294,6 +294,12 @@ def why_text(job_id: str, record: dict | None, state: WorldState) -> str:
 
     tid = record["chosen"]
     lines.append(f"{head} was given to {tid}{when}.")
+    if record.get("decided_by") == "claude":
+        if record.get("claude_reason"):
+            lines.append(f"Claude: {record['claude_reason'].rstrip('.')}.")
+        g = record.get("greedy_choice")
+        if g and g != tid:
+            lines.append(f"Claude moved it from the greedy pick ({g}) after checking the schedule.")
     eta, dl = record.get("eta"), record.get("deadline", job.deadline)
     detail = []
     if record.get("distance_km") is not None:

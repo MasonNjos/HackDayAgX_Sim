@@ -15,7 +15,8 @@ export function TractorTable({ state, onBreak, onRepair }: {
               <td><span className="dot" style={{ background: TRACTOR_COLORS[i % TRACTOR_COLORS.length] }} />
                 <b>{t.id}</b> <span className="muted">{t.implement}</span></td>
               <td><span className={`pill ${t.status}`}>{t.status}</span>
-                {t.stall_reason && <div className="muted small">{t.stall_reason.replace(/_/g, " ")}</div>}</td>
+                {/* "breakdown" would just repeat the "broken" pill; other reasons (out of fuel) add information */}
+                {t.stall_reason && t.stall_reason !== "breakdown" && <div className="muted small">{t.stall_reason.replace(/_/g, " ")}</div>}</td>
               <td><div className="fuelcell">
                 <div className="bar"><div className={frac < 0.2 ? "low" : ""} style={{ width: `${frac * 100}%` }} /></div>
                 <span className="num">{Math.round(t.fuel)} L</span>

@@ -102,6 +102,10 @@ class Sim:
         if any(self.state.tractors[tid].status != COMPLETE for tid in done):
             for tid in done:
                 self.state.tractors[tid].status = COMPLETE
+                self.state.tractors[tid].current_job = None
+                self.queues[tid] = []  # nothing left to do today (e.g. a leftover refuel stop)
+                self.refuel_wait.pop(tid, None)
+                self.going_home.discard(tid)
             self.log.write(self.t + 1, "day_complete", tractors=done)
 
     def all_parked(self) -> bool:

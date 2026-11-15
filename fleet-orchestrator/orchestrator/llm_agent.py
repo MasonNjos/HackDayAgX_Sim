@@ -339,7 +339,8 @@ class LLMFleetAgent:
             "units": "1 tick = 1 minute; km; litres; hectares",
             "trigger": ({"kind": trigger.kind, "params": trigger.params} if trigger
                         else "start of day" if state.t == 0
-                        else "routine replan: a tractor finished its queue (no new event)"),
+                        else "routine replan, no new event: a tractor finished its queue, stalled "
+                             "(e.g. ran out of fuel) or cannot reach its next stop; check tractor statuses"),
             "tractors": [{
                 "id": t.id, "implement": t.implement, "can_do": t.capabilities, "status": t.status,
                 "at_node": t.location, "fuel": round(t.fuel, 1), "fuel_capacity": t.fuel_capacity,

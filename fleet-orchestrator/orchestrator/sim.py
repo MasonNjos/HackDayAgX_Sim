@@ -56,7 +56,10 @@ class Sim:
         self.stall_reason: dict[str, str] = {}
         self.refuel_wait: dict[str, tuple[str, int]] = {}  # tractor -> (depot, ticks waited there)
         self.why: dict[str, dict] = {}
-        self.observers: list = []  # objects with on_event(sim, event), called after each event, before the replan
+        # Observers (e.g. the Maintenance agent): on_event(sim, event) runs after each event and
+        # before its replan; optional on_tick(sim) runs every tick. Apply events only through
+        # process_event(), never apply_event() + replan() directly, or observers miss them.
+        self.observers: list = []
         self.last_explanation = ""
         self.last_warnings: list[str] = []
         self._unreachable_logged: set[tuple[str, str]] = set()

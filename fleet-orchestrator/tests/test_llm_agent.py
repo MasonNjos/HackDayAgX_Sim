@@ -173,4 +173,4 @@ def test_mid_day_replan_without_event_is_not_called_start_of_day(state):
     client = FakeClient(reply(submit(greedy_queues(state))))
     LLMFleetAgent(client).plan(state, None)
     brief = json.loads(client.calls[0][0]["content"])
-    assert "routine replan" in brief["trigger"]
+    assert "routine replan" in brief["trigger"] and "stalled" in brief["trigger"]

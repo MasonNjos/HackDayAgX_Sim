@@ -193,3 +193,27 @@ details.ctl-group summary { cursor: pointer; font-size: 13px; font-weight: 600; 
 .view-toggle button { border: 0; border-radius: 0; background: transparent; color: var(--muted); padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
 .view-toggle button.on { background: var(--line); color: inherit; }
 .sat-map { width: 100%; aspect-ratio: 10.8 / 7.8; min-height: 280px; border-radius: 6px; z-index: 0; }
+
+/* satellite map layers (Leaflet sets inline SVG attributes; these rules override them) */
+.sat-road { stroke: #1c1917; stroke-opacity: .85; }
+.sat-road.blocked { stroke: var(--bad); stroke-opacity: 1; stroke-dasharray: 8 7; }
+.sat-road-hit { cursor: pointer; }
+.leaflet-tooltip.sat-road-label { background: rgba(0, 0, 0, .55); color: #fff; border: 0; box-shadow: none;
+  padding: 1px 6px; font-size: 11px; font-style: italic; }
+.leaflet-tooltip.sat-road-label::before { display: none; }
+.sat-road-x { color: #f87171; font-style: normal; font-weight: 700; }
+.sat-field { fill: var(--pending); fill-opacity: .8; stroke: #fff; stroke-opacity: .9; cursor: pointer; }
+.sat-field.status-assigned { fill: var(--assigned); }
+.sat-field.status-in_progress { fill: var(--in_progress); }
+.sat-field.status-done { fill: var(--done); }
+.sat-field.status-unassignable { fill: var(--unassignable); }
+.sat-field.selected { stroke: #facc15; stroke-opacity: 1; }
+.sat-route { stroke-opacity: .95; }
+.sat-depot { font-size: 18px; line-height: 26px; text-align: center; background: rgba(255, 255, 255, .85);
+  border-radius: 6px; border: 1px solid #44403c; }
+.sat-tractor { width: 22px; height: 22px; box-sizing: border-box; border-radius: 50%; border: 2px solid #fff;
+  color: #fff; font-size: 10px; font-weight: 700; line-height: 18px; text-align: center; position: relative;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .5); }
+.sat-tractor.low-fuel { border-color: var(--bad); }
+.sat-tractor.broken { opacity: .75; }
+.sat-tractor .broken-x { position: absolute; top: -10px; right: -10px; font-size: 13px; }

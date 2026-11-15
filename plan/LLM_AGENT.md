@@ -36,6 +36,16 @@ New file `fleet-orchestrator/orchestrator/llm_agent.py` (B-owned), class `LLMFle
 
 Human override is unchanged: dashboard events go through `sim.inject()`, then `replan()`, then the Claude agent.
 
+## Update: start-of-day route planning
+At minute 0 (no event) Claude now plans the whole day from scratch instead of starting from the greedy plan:
+- the brief has `mode: "full_day"` and only `greedy_score` (km, lateness), not the greedy queues;
+- new tool `evaluate_plan(queues)` scores a whole plan (violations, total km, late jobs, `weighted_late`, unassigned, timelines);
+- the brief also has `fcfs_baseline_target`: a what-if run of the FCFS baseline over the same day (no events) on a copy of the state: jobs done, km, km per job, idle minutes. Claude is told to beat it on travel;
+- `_score` includes `idle_minutes` (each working tractor's wait from the end of its route to the end of the last route) and `last_finish_minute`;
+- `submit_plan` also rejects a full-day plan with more `weighted_late` than greedy, or, at equal lateness, more km (+0.5) without finishing earlier, or a later finish (+5 min) without saving km. Idle is reported, not enforced: a tractor can always look less idle by driving more;
+- the explanation gets a line `Route plan: X km, Y idle min (greedy …; FCFS baseline …); N deadline(s) at risk.`;
+- its own limits: `LLM_MAX_TURNS_START` (14) and `LLM_BUDGET_START` (180 s). Replans after events are unchanged.
+
 ## Files
 - New: `orchestrator/llm_agent.py`, `tests/test_llm_agent.py`
 - Reuse: `orchestrator/fleet_agent.py` (`FleetAgent`), `orchestrator/safety_agent.py` (`simulate_queue`, `validate`, `deadline_warnings`, `must_keep_current`, `nearest_depot`), `orchestrator/nav_agent.py` (`route`, `travel_ticks`)

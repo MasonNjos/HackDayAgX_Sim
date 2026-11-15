@@ -47,7 +47,7 @@ ROWS = [  # (label, key, higher is better; None = informational)
     ("Travel time (tractor-min)", "travel_ticks", False),
     ("Travel distance (km)", "travel_km", False),
     ("Travel per job completed (km)", "travel_per_job", False),
-    ("Idle time (tractor-min)", "idle_ticks", False),
+    ("Idle time (tractor-min, incl. stranded without fuel)", "idle_ticks", False),
     ("Fuel used (L)", "fuel_used", False),
     ("Constraint violations", "violations", False),
     ("Sim minutes run", "ticks", None),
@@ -71,6 +71,8 @@ def comparison_md(scenario: Path, runs: list[tuple[str, dict, Sim]]) -> str:
              f"Scenario: `{scenario.relative_to(ROOT) if scenario.is_relative_to(ROOT) else scenario}` "
              f"({first['jobs_total']} jobs incl. ones added by events). Same scenario, same scripted events, "
              "same simulator, same Maintenance agent.",
+             "", "Idle time counts a tractor stranded after running out of fuel (a planning failure); "
+             "time lost to a breakdown counts as out of service.",
              "", "| Metric | " + " | ".join(names) + " | Best |",
              "|---|" + "---:|" * len(runs) + ":---:|"]
     for label, key, higher_better in ROWS:
@@ -91,11 +93,12 @@ def comparison_md(scenario: Path, runs: list[tuple[str, dict, Sim]]) -> str:
 
     for name, summ, _ in runs:
         lines += ["", f"## {name}: per tractor", "",
-                  "| Tractor | Travel (min) | Travel (km) | Work (min) | Idle (min) | Refuel (min) | Out of service (min) | Fuel used (L) |",
-                  "|---|---:|---:|---:|---:|---:|---:|---:|"]
+                  "| Tractor | Travel (min) | Travel (km) | Work (min) | Idle (min) | of which stranded, no fuel (min) "
+                  "| Refuel (min) | Out of service (min) | Fuel used (L) |",
+                  "|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
         for tid, v in summ["per_tractor"].items():
             lines.append(f"| {tid} | {v['travel_ticks']} | {v['travel_km']} | {v['work_ticks']} | {v['idle_ticks']} "
-                         f"| {v['refuel_ticks']} | {v['broken_ticks']} | {v['fuel_used']} |")
+                         f"| {v['stranded_ticks']} | {v['refuel_ticks']} | {v['broken_ticks']} | {v['fuel_used']} |")
 
     for name, _, sim in runs:
         if sim.metrics.violations:

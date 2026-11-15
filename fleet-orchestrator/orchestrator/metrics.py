@@ -18,6 +18,7 @@ class TractorTotals:
     idle_ticks: int = 0
     refuel_ticks: int = 0
     broken_ticks: int = 0
+    stranded_ticks: int = 0   # out of fuel; also counted in idle_ticks
     fuel_used: float = 0.0
 
 
@@ -31,7 +32,10 @@ class Metrics:
     def _tt(self, tid: str) -> TractorTotals:
         return self.per_tractor.setdefault(tid, TractorTotals())
 
-    def record_tick(self, state: WorldState) -> None:
+    def record_tick(self, state: WorldState, stranded: set[str] | frozenset = frozenset()) -> None:
+        """stranded: tractors stopped because they ran out of fuel. That is the planner's fault, not
+        bad luck, so it counts as idle (and as stranded_ticks), not as out of service. Otherwise a
+        dispatcher that lets a tractor run dry would look less idle than one that refuels it."""
         self.ticks += 1
         for tr in state.tractors.values():
             tt = self._tt(tr.id)
@@ -43,6 +47,9 @@ class Metrics:
                 tt.idle_ticks += 1
             elif tr.status == REFUELLING:
                 tt.refuel_ticks += 1
+            elif tr.status == BROKEN and tr.id in stranded:
+                tt.idle_ticks += 1
+                tt.stranded_ticks += 1
             elif tr.status == BROKEN:
                 tt.broken_ticks += 1
 
@@ -72,6 +79,7 @@ class Metrics:
             "travel_ticks": sum(t.travel_ticks for t in tot),
             "travel_km": round(sum(t.travel_km for t in tot), 2),
             "idle_ticks": sum(t.idle_ticks for t in tot),
+            "stranded_ticks": sum(t.stranded_ticks for t in tot),
             "fuel_used": round(sum(t.fuel_used for t in tot), 1),
             "violations": len(self.violations),
             "replans": self.replans,

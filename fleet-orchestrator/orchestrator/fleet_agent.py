@@ -9,11 +9,17 @@ plan() is a pure function of the world state (it never mutates it):
   4. greedy: most urgent job first (priority, then least slack), to the tractor
      with the lowest marginal cost (travel + waiting + lateness penalty).
 Jobs no tractor can take go to warnings with the reason for every tractor.
+
+Before returning, the plan is checked with safety.validate(). If it fails, the
+agent falls back to its last valid plan (pruned to the current state), then to
+"every tractor keeps only its current job", so the sim is never handed an unsafe
+plan. The explanation is a diff against the last plan (explain.py).
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
+from . import explain
 from . import safety_agent as safety
 from .models import BROKEN, DONE, Event, Job, Plan, Stop, WorldState
 
@@ -36,7 +42,30 @@ class Option:
 class FleetAgent:
     name = "coordinator"
 
+    def __init__(self) -> None:
+        self._last_queues: dict[str, list[Stop]] | None = None  # last plan returned (valid)
+
     def plan(self, state: WorldState, trigger: Event | None) -> Plan:
+        queues, why, warnings = self._build(state, trigger)
+        plan = Plan(queues=queues, why=why)
+        violations = safety.validate(plan, state)
+        note = ""
+        if violations:
+            fallback = self._fallback(state)
+            if fallback is not None:
+                kept, label = fallback
+                warnings = [f"SAFETY: plan rejected ({'; '.join(violations)}); kept {label}"]
+                note = f"Safety check rejected the new plan ({violations[0]}); kept {label}. "
+                plan, violations = Plan(queues=kept), []
+        plan.warnings = (warnings + safety.deadline_warnings(plan, state)
+                         + [f"SAFETY: {v}" for v in violations])
+        plan.explanation = note + explain.explain_plan(self._last_queues, plan, state, trigger)
+        if not violations:
+            self._last_queues = {tid: list(q) for tid, q in plan.queues.items()}
+        return plan
+
+    def _build(self, state: WorldState, trigger: Event | None):
+        """Greedy assignment. Returns (queues, why records, warnings)."""
         queues: dict[str, list[Stop]] = {}
         pinned: set[str] = set()
         for t in state.tractors.values():
@@ -46,6 +75,7 @@ class FleetAgent:
                 queues[t.id] = [Stop("job", t.current_job)]
                 pinned.add(t.current_job)
 
+        trig = {"kind": trigger.kind, "t": trigger.t, "params": trigger.params} if trigger else None
         sims = {tid: safety.simulate_queue(state.tractors[tid], q, state) for tid, q in queues.items()}
         why: dict[str, dict] = {}
         warnings: list[str] = []
@@ -56,7 +86,8 @@ class FleetAgent:
                 continue
             if j.field not in state.fields:
                 warnings.append(f"{j.id} unassignable: unknown field {j.field}")
-                why[j.id] = {"chosen": None, "eligible": [], "rejected": {}, "reason": f"unknown field {j.field}"}
+                why[j.id] = {"chosen": None, "eligible": [], "rejected": {}, "reason": f"unknown field {j.field}",
+                              "planned_at": state.t, "trigger": trig}
                 continue
             pool.append(j)
 
@@ -69,7 +100,8 @@ class FleetAgent:
                     reason = "; ".join(f"{tid}: {r}" for tid, r in rejected.items()) or "no tractors"
                     warnings.append(f"{job.id} unassignable (needs {job.type} on "
                                     f"{state.fields[job.field].name}): {reason}")
-                    why[job.id] = {"chosen": None, "eligible": [], "rejected": rejected}
+                    why[job.id] = {"chosen": None, "eligible": [], "rejected": rejected,
+                                   "planned_at": state.t, "trigger": trig}
                     continue
                 opt = min(options.values(), key=lambda o: (o.cost, o.tractor))
                 slack = job.deadline - opt.finish
@@ -86,6 +118,13 @@ class FleetAgent:
                         "eligible": sorted(options),
                         "alternatives": {tid: round(o.cost, 1) for tid, o in options.items() if tid != opt.tractor},
                         "rejected": rejected,
+                        "distance_km": opt.terms["distance_km"],
+                        "slack": slack,
+                        "options": {tid: {"eta": o.finish, "cost": round(o.cost, 1),
+                                          "distance_km": o.terms["distance_km"], "refuel_first": o.refuel}
+                                    for tid, o in options.items()},
+                        "planned_at": state.t,
+                        "trigger": trig,
                     }
             if best_job is None:
                 break
@@ -95,11 +134,35 @@ class FleetAgent:
             pool.remove(best_job)
 
         self._top_up(state, queues, sims)
-        plan = Plan(queues=queues, why=why)
-        violations = safety.validate(plan, state)
-        plan.warnings = warnings + safety.deadline_warnings(plan, state) + [f"SAFETY: {v}" for v in violations]
-        plan.explanation = self._summary(plan, state, trigger)
-        return plan
+        return queues, why, warnings
+
+    def _fallback(self, state: WorldState) -> tuple[dict[str, list[Stop]], str] | None:
+        """A safe plan to keep when a new one fails validation, or None."""
+        pinned = {}
+        for t in state.tractors.values():
+            pinned[t.id] = [Stop("job", t.current_job)] if safety.must_keep_current(t, state) else []
+        candidates = []
+        if self._last_queues is not None:
+            keep_jobs = {q[0].target for q in pinned.values() if q}
+            pruned = {}
+            for t in state.tractors.values():
+                q = list(pinned[t.id])
+                if t.status != BROKEN:
+                    for s in self._last_queues.get(t.id, []):
+                        if s.kind == "refuel" and s.target in state.depots:
+                            q.append(s)
+                        elif s.kind == "job" and s.target in state.jobs and s.target not in keep_jobs:
+                            job = state.jobs[s.target]
+                            if job.status != DONE and safety.compatible(t, job):
+                                q.append(s)
+                                keep_jobs.add(s.target)
+                pruned[t.id] = q
+            candidates.append((pruned, "the previous plan"))
+        candidates.append((pinned, "only the jobs in progress"))
+        for queues, label in candidates:
+            if not safety.validate(Plan(queues=queues), state):
+                return queues, label
+        return None
 
     # --- helpers -------------------------------------------------------------
 
@@ -162,16 +225,7 @@ class FleetAgent:
             refuel_ticks = safety.REFUEL_TICKS if refuel else 0
             cost = added_travel + refuel_ticks + WAIT_WEIGHT * wait + LATE_PENALTY * late
             terms = {"travel_ticks": added_travel, "wait_ticks": wait, "late_ticks": late,
-                     "refuel_ticks": refuel_ticks, "total": round(cost, 1)}
+                     "refuel_ticks": refuel_ticks, "total": round(cost, 1),
+                     "distance_km": round(step.travel_km, 1)}
             return Option(tid, stops, sim, step.finish, cost, terms, refuel)
         return first_reason or "no feasible schedule"
-
-    def _summary(self, plan: Plan, state: WorldState, trigger: Event | None) -> str:
-        assigned = {tid: [s.target for s in q if s.kind == "job"] for tid, q in plan.queues.items()}
-        parts = [f"{tid}: {' > '.join(js) if js else 'idle'}" for tid, js in assigned.items()]
-        n_unassignable = sum(1 for w in plan.warnings if " unassignable " in w)
-        head = f"t={state.t}"
-        if trigger is not None:
-            head += f" after {trigger.kind} {trigger.params}"
-        tail = f"; {n_unassignable} unassignable" if n_unassignable else ""
-        return f"{head}. Plan: " + "; ".join(parts) + tail

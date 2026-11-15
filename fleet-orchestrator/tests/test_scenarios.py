@@ -162,3 +162,86 @@ def test_job_on_unknown_field_is_reported_not_crashing(state):
     assert_safe(plan, state)
     assert "J99" not in owners(plan)
     assert any(w.startswith("J99 unassignable: unknown field F99") for w in plan.warnings)
+
+
+# --- through the real sim: breakdown recovery -----------------------------------
+
+from orchestrator.models import DONE, PENDING  # noqa: E402
+from orchestrator.sim import Sim  # noqa: E402
+
+
+def sim_until_working(tid: str, job_type: str, extra_events=()):
+    """Scenario without its scripted breakdown, stepped until tid is part-way through a job."""
+    state, events, meta = load_scenario(SCENARIO)
+    events = [e for e in events if e.kind != "breakdown"] + list(extra_events)
+    sim = Sim(state, events, FleetAgent(), horizon=meta.get("horizon", 480))
+    for _ in range(400):
+        sim.step()
+        tr = state.tractors[tid]
+        job = state.jobs.get(tr.current_job) if tr.current_job else None
+        if tr.status == WORKING and job and job.type == job_type and 0.2 < job.remaining < 0.8:
+            return sim, job
+    raise AssertionError(f"{tid} never worked a {job_type} job")
+
+
+def break_now(sim, tid):
+    sim.inject(Event(sim.t, "breakdown", {"tractor": tid}))
+    sim.step()
+
+
+def test_sim_breakdown_of_only_mower_reports_unassignable(state):
+    sim, job = sim_until_working("T3", "mow")
+    t_break, remaining = sim.t, job.remaining
+    break_now(sim, "T3")
+    s = sim.state
+    assert s.tractors["T3"].status == BROKEN
+    assert job.status == PENDING and job.owner is None
+    assert job.remaining == pytest.approx(remaining)          # partial work kept
+    open_mow = [j for j in s.jobs.values() if j.type == "mow" and j.status != DONE]
+    assert job in open_mow
+    for j in open_mow:
+        assert all(st.target != j.id for q in sim.queues.values() for st in q)
+        msg = next(w for w in sim.last_warnings if w.startswith(f"{j.id} unassignable"))
+        assert "T3 is broken down" in msg
+        assert sim.why[j.id]["chosen"] is None
+    assert sim.last_explanation.startswith(f"T3 broke down at t={t_break} while mowing")
+    assert f"{round((1 - remaining) * 100)}% done" in sim.last_explanation
+    assert "cannot be assigned right now" in sim.last_explanation
+    assert sim.metrics.violations == []
+
+
+def test_sim_repair_puts_unassignable_mow_jobs_back(state):
+    sim, job = sim_until_working("T3", "mow")
+    break_now(sim, "T3")
+    sim.inject(Event(sim.t + 10, "repair", {"tractor": "T3"}))
+    sim.run()
+    assert job.status == DONE and job.completed_by == ["T3"]
+    assert sim.metrics.violations == []
+
+
+def test_sim_breakdown_mid_spray_moves_work_to_other_sprayer(state):
+    sim, job = sim_until_working("T2", "spray")
+    remaining = job.remaining
+    break_now(sim, "T2")
+    assert job.remaining == pytest.approx(remaining)
+    owners_now = [tid for tid, q in sim.queues.items() for st in q if st.target == job.id]
+    assert owners_now == ["T1"]
+    exp = sim.last_explanation
+    assert exp.startswith("T2 broke down") and f"{round((1 - remaining) * 100)}% done" in exp
+    assert "Its remaining work went to T1" in exp
+    assert sim.metrics.violations == []
+    sim.run()
+    assert job.status == DONE and job.completed_by == ["T2", "T1"]
+    assert sim.metrics.violations == []
+
+
+def test_invalid_plan_falls_back_to_a_safe_one(state, monkeypatch):
+    agent = FleetAgent()
+    first = agent.plan(state, None)
+    bad = {"T1": [Stop("job", "J3")], "T2": [Stop("job", "J3")], "T3": []}  # wrong implement + two owners
+    monkeypatch.setattr(agent, "_build", lambda s, t: (bad, {}, []))
+    plan = agent.plan(state, None)
+    assert validate(plan, state) == []
+    assert plan.queues == first.queues
+    assert any(w.startswith("SAFETY: plan rejected") for w in plan.warnings)
+    assert plan.explanation.startswith("Safety check rejected the new plan")

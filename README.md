@@ -20,9 +20,17 @@ docker compose up --build     # dashboard: http://localhost:5173   API: http://l
 ```
 
 In the dashboard, press **▶ Start**. With `COORDINATOR=llm` in `.env` the run starts on Claude. To
-start over with another coordinator, pick it in the **reset as** dropdown: **Claude**, **Greedy**
-(the deterministic planner) or **FCFS baseline** (first come, first served). A badge in the
-explanation panel shows which coordinator made the plan the tractors are following.
+start over with another coordinator, pick it in the **coordinator** dropdown and press **Reset**:
+**Claude**, **Greedy** (the deterministic planner) or **FCFS baseline** (first come, first served).
+A badge in the explanation panel shows which coordinator made the plan the tractors are following.
+
+**Map or Satellite.** The farm map has two views; the toggle above it remembers your choice.
+**Map** (the default) is a plain diagram and works offline. **Satellite** draws the same farm on
+real satellite imagery of the Imperial Valley, California (Esri World Imagery, via Leaflet): every
+farm road sits on a real farm road, so tractors drive along real roads, and the Alamo River runs
+under the bridge and the south road. Both views work the same way: click a road to block or reopen
+it, click a field for "why?". Satellite needs an internet connection for the imagery, and it is
+drawn at about 1.6× the sim's distances (the real roads are farther apart than the scenario's).
 
 **No API key?** Everything still works: the coordinator falls back to the greedy planner, with the
 same safety checks, and says so in the dashboard's warnings.
@@ -46,6 +54,7 @@ Rebuild (`--build`) only after changing `requirements.txt` or `dashboard/package
 | `LLM_MODEL` | `claude-opus-5-5` | Claude model. |
 | `LLM_EFFORT` | `medium` | `low` gives faster replans. |
 | `LLM_TIMEOUT` / `LLM_BUDGET` | `45` / `90` s | Per request / per replan; past the budget the greedy plan is used. |
+| `LLM_MAX_TURNS` | `8` | Tool-use turns per replan. |
 | `LLM_MAX_TURNS_START` / `LLM_BUDGET_START` | `14` / `180` s | Turns and time for the start-of-day route plan. |
 | `REPAIR_TRACTOR_MIN` | `5` | Ticks until a broken tractor is repaired. |
 | `REPAIR_ROAD_MIN` | `10` | Ticks until a blocked road or bridge reopens. |
@@ -147,9 +156,9 @@ coordinator only; it still finishes with 0 violations.
 fleet-orchestrator/
   orchestrator/      sim, agents (llm, fleet, safety, maintenance, nav), explain, metrics, event log
   scenarios/         farm.json
-  dashboard/         React dashboard (map, tractors, jobs, explanations, event log, operator buttons)
+  dashboard/         React dashboard (map and satellite views, tractors, jobs, explanations, event log, operator buttons)
   server.py          FastAPI: /api/state, /api/event, /api/jobs, /api/why/{job}, /api/speed
   run_demo.py        baseline vs coordinator -> out/comparison.md, out/event_log.jsonl
   tests/             invariants, scenarios, Claude coordinator (offline fake client), maintenance, server
-plan/                PLAN.md, TEAM_SPLIT.md, LLM_AGENT.md
+plan/                PLAN.md, TEAM_SPLIT.md, LLM_AGENT.md, LEAFLET.md
 ```

@@ -64,10 +64,6 @@ export function OperatorControls({ state, onEvent, onJobs }: {
   const open = state.jobs.filter((j) => j.status !== "done");
   const [prioJob, setPrioJob] = useState("");
   const [prio, setPrio] = useState(3);
-  const nextId = () => {
-    const n = Math.max(0, ...state.jobs.map((j) => Number(j.id.replace(/\D/g, "")) || 0)) + 1;
-    return `J${n}`;
-  };
   const [job, setJob] = useState({ type: "spray", field: state.fields[0]?.id ?? "", priority: 2, deadline: 300 });
   const [bulk, setBulk] = useState("");
 
@@ -100,13 +96,14 @@ export function OperatorControls({ state, onEvent, onJobs }: {
           <input type="number" min={state.t} value={job.deadline}
                  onChange={(e) => setJob({ ...job, deadline: Number(e.target.value) })} />
         </label>
-        <button onClick={() => onJobs([{ id: nextId(), ...job }])}>Submit</button>
+        {/* No id: the server picks the next free one, including jobs queued before Start. */}
+        <button onClick={() => onJobs([{ ...job }])}>Submit</button>
       </div>
 
       <details className="ctl-group">
         <summary>Submit a job list (JSON)</summary>
         <textarea rows={4} value={bulk} onChange={(e) => setBulk(e.target.value)}
-                  placeholder='[{"id":"J20","type":"mow","field":"F2","priority":2,"deadline":400}]' />
+                  placeholder='[{"type":"mow","field":"F2","priority":2,"deadline":400}]  (id optional)' />
         <button onClick={() => {
           try { onJobs(JSON.parse(bulk)); setBulk(""); } catch { alert("Not valid JSON"); }
         }}>Submit list</button>

@@ -18,6 +18,7 @@ If dashboard/dist exists (built React app), it is served at /.
 from __future__ import annotations
 
 import math
+import os
 import threading
 import time
 import traceback
@@ -31,13 +32,15 @@ from pydantic import BaseModel, Field
 from orchestrator.baseline import FCFSDispatcher
 from orchestrator.eventlog import EventLog
 from orchestrator.fleet_agent import FleetAgent
+from orchestrator.llm_agent import LLMFleetAgent
+from orchestrator.maintenance_agent import MaintenanceAgent
 from orchestrator.models import EVENT_KINDS, IMPLEMENT_JOBS, Event, load_scenario
 from orchestrator.sim import Sim
 
 ROOT = Path(__file__).parent
 SCENARIO = ROOT / "scenarios" / "farm.json"
 DIST = ROOT / "dashboard" / "dist"
-DISPATCHERS = {"coordinator": FleetAgent, "baseline": FCFSDispatcher}
+DISPATCHERS = {"coordinator": FleetAgent, "claude": LLMFleetAgent, "baseline": FCFSDispatcher}
 JOB_TYPES = sorted({t for types in IMPLEMENT_JOBS.values() for t in types})
 
 
@@ -52,12 +55,14 @@ class Runner:
         self.error: str | None = None  # last exception from a sim step (sim is paused when set)
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
-        self.reset("coordinator")
+        # COORDINATOR=llm (in .env) starts on the Claude coordinator, also after an auto-reload.
+        self.reset("claude" if os.environ.get("COORDINATOR", "greedy") == "llm" else "coordinator")
 
     def reset(self, dispatcher: str) -> None:
         state, events, meta = load_scenario(SCENARIO)
         disp = DISPATCHERS[dispatcher]()
         sim = Sim(state, events, disp, EventLog(dispatcher=disp.name), horizon=meta.get("horizon", 480))
+        MaintenanceAgent().attach(sim)  # repair crews for breakdowns and blocked roads, every dispatcher
         with self.lock:
             self.sim = sim
             self.paused = True

@@ -13,6 +13,9 @@ services:
       - "${API_PORT:-8000}:8000"   # set API_PORT if 8000 is busy on your machine
     volumes:
       - .:/app
+    env_file:
+      - path: .env        # ANTHROPIC_API_KEY, COORDINATOR, LLM_* (copy example.env to .env)
+        required: false
     command: uvicorn server:app --host 0.0.0.0 --port 8000 --reload
 
   web:

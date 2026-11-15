@@ -166,3 +166,11 @@ def test_full_sim_run_with_claude_has_no_violations():
     assert claude.last_explanation.startswith("[Claude]")
     done = lambda s: {j.id for j in s.state.jobs.values() if j.status == "done"}
     assert done(claude) == done(greedy)
+
+
+def test_mid_day_replan_without_event_is_not_called_start_of_day(state):
+    state.t = 200
+    client = FakeClient(reply(submit(greedy_queues(state))))
+    LLMFleetAgent(client).plan(state, None)
+    brief = json.loads(client.calls[0][0]["content"])
+    assert "routine replan" in brief["trigger"] and "stalled" in brief["trigger"]

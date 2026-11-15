@@ -334,7 +334,7 @@ def _apply_pending() -> None:
     while sim.pending_events and sim.pending_events[0].t <= sim.t:
         ev = sim.pending_events.pop(0)
         try:
-            sim.apply_event_now(ev)  # runs observers too, so the Maintenance agent sees operator clicks
+            sim.process_event(ev)  # apply + Maintenance agent + replan, same as a tick
         except Exception as exc:  # same handling as a failed tick: pause until Reset
             runner.fail(exc)
             raise HTTPException(500, f"applying {ev.kind} failed ({exc!r}); the run is paused, press Reset")

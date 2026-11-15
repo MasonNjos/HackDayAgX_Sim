@@ -45,7 +45,7 @@ def test_stale_plan_is_discarded_and_replanned():
     sim.step()                                   # start: requests the first plan
     trigger, copy_, version = sim.take_plan_request()
     plan = sim.dispatcher.plan(copy_, trigger)
-    sim.apply_event_now(Event(sim.t, "breakdown", {"tractor": "T1"}))  # world changes meanwhile
+    sim.process_event(Event(sim.t, "breakdown", {"tractor": "T1"}))  # world changes meanwhile
     assert sim.commit_plan(plan, trigger, version) is False
     assert sim.plan_requests, "a fresh plan must be requested"
     assert all(not q for q in sim.queues.values())  # stale plan not applied
@@ -87,5 +87,5 @@ def test_dashboard_breakdown_reaches_maintenance_agent():
     sim = runner.sim
     sim.defer_plans = False
     sim.step()
-    sim.apply_event_now(Event(sim.t, "breakdown", {"tractor": "T2"}))
+    sim.process_event(Event(sim.t, "breakdown", {"tractor": "T2"}))
     assert any(e.kind == "repair" and e.params.get("tractor") == "T2" for e in sim.pending_events)
